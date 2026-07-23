@@ -1,0 +1,20 @@
+# .*
+.git/
+!.vscode/
+.vscode/settings.json
+build/
+install/
+log/
+build.before_path_rename/
+install.before_path_rename/
+log.before_path_rename/
+dist/
+.pytest_cache/
+.agents/
+.codex/
+!.gitignore
+# proxsuite/
+bxi_hw_release/
+__pycache__/
+*.py[cod]
+MUJOCO_LOG.TXT*
