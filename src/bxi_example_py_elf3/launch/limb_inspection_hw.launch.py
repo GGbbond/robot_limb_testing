@@ -9,6 +9,22 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
+from bxi_example_py_elf3.limb_inspection_config import load_settings
+from bxi_example_py_elf3.limb_inspection_core import hardware_motor_disable_mask
+
+
+def _configured_motor_disable_mask():
+    """Use the same saved limb selection as the simulation and hardware UI."""
+    settings = load_settings()
+    limb = settings.get("limb", "arm")
+    side = settings.get("side", "left")
+    if side == "both":
+        side = "both_simultaneous"
+    try:
+        return hardware_motor_disable_mask(limb, side)
+    except (KeyError, ValueError):
+        return hardware_motor_disable_mask("arm", "left")
+
 
 def _require_root(_context):
     if os.geteuid() != 0:
@@ -41,13 +57,15 @@ def generate_launch_description():
     initialization = LaunchConfiguration("initialization_sec")
     velocity_fault_duration = LaunchConfiguration("velocity_fault_duration_sec")
     max_command_gap = LaunchConfiguration("max_command_gap_sec")
+    motor_disable = LaunchConfiguration("motor_disable_mask")
     hardware = Node(
         package="hardware_elf3", executable="hardware_elf3",
         name="hardware_elf3", output="screen", emulate_tty=True,
         parameters=[{
             "hardware_config/imu": True,
             "hardware_config/motor_pwr": True,
-            "hardware_config/motor_disable": 0x60000000,
+            "hardware_config/motor_disable": ParameterValue(
+                motor_disable, value_type=int),
         }])
     application = Node(
         package="bxi_example_py_elf3",
@@ -69,6 +87,12 @@ def generate_launch_description():
         DeclareLaunchArgument("initialization_sec", default_value="10.0"),
         DeclareLaunchArgument("velocity_fault_duration_sec", default_value="0.01"),
         DeclareLaunchArgument("max_command_gap_sec", default_value="0.08"),
+        DeclareLaunchArgument(
+            "motor_disable_mask",
+            default_value=str(_configured_motor_disable_mask()),
+            description=(
+                "Bit mask of motors disabled by hardware_elf3; defaults to "
+                "all motors outside the saved limb/side selection")),
         RegisterEventHandler(OnProcessExit(
             target_action=hardware,
             on_exit=_handle_hardware_exit)),

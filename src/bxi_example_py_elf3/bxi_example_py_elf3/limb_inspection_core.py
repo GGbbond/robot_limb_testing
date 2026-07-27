@@ -194,6 +194,23 @@ def selected_joints(limb: str, side: str) -> Tuple[str, ...]:
     return tuple(name for current in sides for name in LIMB_JOINTS[(limb, current)])
 
 
+def hardware_motor_disable_mask(limb: str, side: str) -> int:
+    """Disable every Elf3 motor except the limb joints selected for testing.
+
+    The vendor hardware driver maps mask bits 0..30 to its joint-name order:
+    the 29 names in JOINT_NAMES followed by the two head joints.  A set bit
+    disables that motor.  Bench testing intentionally has only the selected
+    arm(s) or leg(s) connected, so waist, head, and unselected limbs must not
+    participate in the driver's online-motor check.
+    """
+    enabled = set(selected_joints(limb, side))
+    mask = (1 << 31) - 1
+    for index, name in enumerate(JOINT_NAMES):
+        if name in enabled:
+            mask &= ~(1 << index)
+    return mask
+
+
 def selected_joint_groups(limb: str, side: str) -> Tuple[Tuple[str, ...], ...]:
     """Return serial singletons or simultaneous left/right joint pairs."""
     if side == "both_simultaneous":

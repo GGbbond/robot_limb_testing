@@ -169,6 +169,10 @@ def test_hardware_exit_marker_ignores_intentional_shutdown(tmp_path, monkeypatch
     marker = tmp_path / "hardware_failure"
     monkeypatch.setenv("BXI_LIMB_HARDWARE_FAILURE_FILE", str(marker))
 
+    monkeypatch.setattr(
+        module, "load_settings", lambda: {"limb": "leg", "side": "right"})
+    assert module._configured_motor_disable_mask() == 0x7FFF81FF
+
     module._handle_hardware_exit(
         SimpleNamespace(returncode=0), SimpleNamespace(is_shutdown=True))
     assert not marker.exists()

@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from bxi_example_py_elf3.limb_inspection_core import (
-    JOINT_NAMES, InspectionSettings, evaluate_joint, minimum_jerk,
+    JOINT_NAMES, InspectionSettings, evaluate_joint,
+    hardware_motor_disable_mask, minimum_jerk,
     selected_feedback_summary, selected_joint_groups, selected_joints,
 )
 from bxi_example_py_elf3.limb_inspection_posture import (
@@ -20,6 +21,25 @@ def test_selection_is_bilateral_but_serial_ordered():
     assert len(simultaneous) == 6
     assert simultaneous[0] == ("l_ankle_x_joint", "r_ankle_x_joint")
     assert simultaneous[-1] == ("l_hip_y_joint", "r_hip_y_joint")
+
+
+def test_hardware_mask_enables_only_selected_bench_motors():
+    expected = {
+        ("arm", "left"): 0x7FC07FFF,
+        ("arm", "right"): 0x603FFFFF,
+        ("arm", "both_simultaneous"): 0x60007FFF,
+        ("leg", "left"): 0x7FFFFE07,
+        ("leg", "right"): 0x7FFF81FF,
+        ("leg", "both_simultaneous"): 0x7FFF8007,
+    }
+    for selection, expected_mask in expected.items():
+        mask = hardware_motor_disable_mask(*selection)
+        assert mask == expected_mask
+        selected = set(selected_joints(*selection))
+        for index, name in enumerate(JOINT_NAMES):
+            assert bool(mask & (1 << index)) == (name not in selected)
+        assert mask & (1 << 29)
+        assert mask & (1 << 30)
 
 
 def test_feedback_summary_uses_selected_fresh_joints_and_worst_age():
