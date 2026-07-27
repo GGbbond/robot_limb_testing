@@ -60,7 +60,7 @@ def test_evaluation_pass_and_fail():
     assert "运动不足" in result.reason
 
 
-def test_simulation_debug_accepts_effectively_unbounded_parameters():
+def test_simulation_and_hardware_reject_unbounded_parameters_equally():
     settings = InspectionSettings(
         amplitude_deg=1.0e8, move_sec=1.0e8, hold_sec=1.0e8,
         cycles=1_000_000, collision_margin_deg=1.0e8,
@@ -69,7 +69,6 @@ def test_simulation_debug_accepts_effectively_unbounded_parameters():
         cross_axis_limit_deg=1.0e8, max_velocity_deg_s=1.0e8,
         max_effort_nm=1.0e8,
     )
-    settings.validate(simulation_debug=True)
     with pytest.raises(ValueError):
         settings.validate()
 
@@ -83,6 +82,16 @@ def test_hardware_thresholds_cannot_disable_safety_guards():
         settings = InspectionSettings(**{field: value})
         with pytest.raises(ValueError):
             settings.validate()
+
+
+def test_default_settings_are_shared_conservative_values():
+    settings = InspectionSettings()
+    settings.validate()
+    assert settings.side == "left"
+    assert settings.motion_mode == "small_motion"
+    assert settings.amplitude_deg == 3.0
+    assert settings.move_sec == 2.0
+    assert settings.range_speed_deg_s == 10.0
 
 
 def test_simultaneous_peer_is_not_counted_as_cross_axis_motion():

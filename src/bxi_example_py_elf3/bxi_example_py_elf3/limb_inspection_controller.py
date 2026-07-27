@@ -50,14 +50,13 @@ class LimbInspectionController(Node):
         self.control_rate_hz = float(self.declare_parameter(
             "control_rate_hz", 100.0).value)
         self.feedback_timeout_sec = float(self.declare_parameter(
-            "feedback_timeout_sec", 0.25).value)
+            "feedback_timeout_sec", 0.2).value)
         self.initialization_sec = float(self.declare_parameter(
-            "initialization_sec", 3.0).value)
+            "initialization_sec", 10.0).value)
         self.simulation_bench_height_m = float(self.declare_parameter(
             "simulation_bench_height_m", 1.7).value)
         self.velocity_fault_duration_sec = float(self.declare_parameter(
-            "velocity_fault_duration_sec",
-            0.01 if self.hardware_mode else 0.05).value)
+            "velocity_fault_duration_sec", 0.01).value)
         self.collision_guard_enabled = bool(self.declare_parameter(
             "collision_guard_enabled", True).value)
         self.max_command_gap_sec = float(self.declare_parameter(
@@ -208,7 +207,7 @@ class LimbInspectionController(Node):
             return self.position.copy()
 
     def configure_selection(self, settings):
-        settings.validate(simulation_debug=not self.hardware_mode)
+        settings.validate()
         names = selected_joints(settings.limb, settings.side)
         groups = selected_joint_groups(settings.limb, settings.side)
         indices = tuple(JOINT_NAMES.index(name) for name in names)
@@ -319,7 +318,7 @@ class LimbInspectionController(Node):
         return success
 
     def start_test(self, settings):
-        settings.validate(simulation_debug=not self.hardware_mode)
+        settings.validate()
         requested_names = selected_joints(settings.limb, settings.side)
         with self.lock:
             if not self.initialized:

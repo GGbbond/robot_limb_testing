@@ -17,8 +17,6 @@ USER_SETTINGS = CONFIG_DIR / "settings.json"
 # do not lose their settings when settings.json has not been created yet.
 LEGACY_HARDWARE_USER_SETTINGS = CONFIG_DIR / "settings_hardware.json"
 DEFAULT_REPORT_DIRECTORY = "~/BXI/limb_inspection_reports"
-SIMULATION_DEBUG_MAX = 1_000_000_000.0
-SIMULATION_DEBUG_MAX_CYCLES = 2_147_483_647
 
 
 def defaults_path():

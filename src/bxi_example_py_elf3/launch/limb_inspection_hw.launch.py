@@ -19,6 +19,7 @@ def generate_launch_description():
     rate = LaunchConfiguration("control_rate_hz")
     timeout = LaunchConfiguration("feedback_timeout_sec")
     initialization = LaunchConfiguration("initialization_sec")
+    velocity_fault_duration = LaunchConfiguration("velocity_fault_duration_sec")
     max_command_gap = LaunchConfiguration("max_command_gap_sec")
     hardware = Node(
         package="hardware_elf3", executable="hardware_elf3",
@@ -37,6 +38,8 @@ def generate_launch_description():
             "control_rate_hz": ParameterValue(rate, value_type=float),
             "feedback_timeout_sec": ParameterValue(timeout, value_type=float),
             "initialization_sec": ParameterValue(initialization, value_type=float),
+            "velocity_fault_duration_sec": ParameterValue(
+                velocity_fault_duration, value_type=float),
             "max_command_gap_sec": ParameterValue(max_command_gap, value_type=float),
         }])
     return LaunchDescription([
@@ -44,6 +47,7 @@ def generate_launch_description():
         DeclareLaunchArgument("control_rate_hz", default_value="100.0"),
         DeclareLaunchArgument("feedback_timeout_sec", default_value="0.20"),
         DeclareLaunchArgument("initialization_sec", default_value="10.0"),
+        DeclareLaunchArgument("velocity_fault_duration_sec", default_value="0.01"),
         DeclareLaunchArgument("max_command_gap_sec", default_value="0.08"),
         RegisterEventHandler(OnProcessExit(
             target_action=hardware,

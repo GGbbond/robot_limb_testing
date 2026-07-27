@@ -119,15 +119,15 @@ JOINT_KD = np.array([
 @dataclass(frozen=True)
 class InspectionSettings:
     limb: str = "arm"
-    side: str = "both_simultaneous"
-    motion_mode: str = "safe_range"
-    amplitude_deg: float = 5.0
-    move_sec: float = 1.5
+    side: str = "left"
+    motion_mode: str = "small_motion"
+    amplitude_deg: float = 3.0
+    move_sec: float = 2.0
     hold_sec: float = 0.5
     cycles: int = 1
     collision_margin_deg: float = 5.0
     mechanical_margin_deg: float = 2.0
-    range_speed_deg_s: float = 20.0
+    range_speed_deg_s: float = 10.0
     full_range_confirmed: bool = False
     tracking_tolerance_deg: float = 2.0
     minimum_motion_ratio: float = 0.6
@@ -135,7 +135,7 @@ class InspectionSettings:
     max_velocity_deg_s: float = 30.0
     max_effort_nm: float = 80.0
 
-    def validate(self, simulation_debug: bool = False) -> None:
+    def validate(self) -> None:
         if self.limb not in ("arm", "leg"):
             raise ValueError("limb must be arm or leg")
         if self.side not in ("left", "right", "both", "both_simultaneous"):
@@ -152,27 +152,6 @@ class InspectionSettings:
         )
         if not all(np.isfinite(value) for value in numeric_values):
             raise ValueError("检测参数必须是有限数值")
-        if simulation_debug:
-            if self.amplitude_deg <= 0.0:
-                raise ValueError("测试幅度必须大于 0°")
-            if self.move_sec <= 0.0:
-                raise ValueError("单程时间必须大于 0s")
-            if self.hold_sec < 0.0:
-                raise ValueError("保持时间不能小于 0s")
-            if self.cycles < 1:
-                raise ValueError("循环次数必须大于或等于 1")
-            if self.collision_margin_deg < 0.0:
-                raise ValueError("碰撞余量不能小于 0°")
-            if self.mechanical_margin_deg < 0.0:
-                raise ValueError("机械限位余量不能小于 0°")
-            if self.range_speed_deg_s <= 0.0:
-                raise ValueError("全行程速度必须大于 0°/s")
-            if min(self.tracking_tolerance_deg, self.cross_axis_limit_deg,
-                   self.max_velocity_deg_s, self.max_effort_nm) <= 0.0:
-                raise ValueError("判定阈值必须大于 0")
-            if self.minimum_motion_ratio < 0.0:
-                raise ValueError("最小响应比例不能小于 0")
-            return
         if not 0.1 <= self.amplitude_deg <= 20.0:
             raise ValueError("测试幅度必须在 0.1° 到 20° 之间")
         if not 0.2 <= self.move_sec <= 20.0:

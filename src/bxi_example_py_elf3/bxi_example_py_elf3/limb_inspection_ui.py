@@ -30,8 +30,7 @@ from rclpy.utilities import remove_ros_args
 
 from .limb_inspection_controller import LimbInspectionController
 from .limb_inspection_config import (
-    DEFAULT_REPORT_DIRECTORY, SIMULATION_DEBUG_MAX,
-    SIMULATION_DEBUG_MAX_CYCLES, load_settings, save_settings,
+    DEFAULT_REPORT_DIRECTORY, load_settings, save_settings,
 )
 from .limb_inspection_core import (
     JOINT_LABELS, JOINT_NAMES, InspectionSettings, selected_joints,
@@ -169,7 +168,7 @@ class LimbInspectionWindow(QMainWindow):
         status_layout.addWidget(self.detail_label, 4, 0, 1, 2)
         self.simulation_debug_label = None
         if not self.controller.hardware_mode:
-            self.simulation_debug_label = QLabel("仿真调试：参数上限已放宽")
+            self.simulation_debug_label = QLabel("仿真与实机使用相同参数和安全阈值")
             self.simulation_debug_label.setProperty("role", "muted")
             status_layout.addWidget(self.simulation_debug_label, 5, 0, 1, 2)
         layout.addWidget(self.status_group)
@@ -184,7 +183,7 @@ class LimbInspectionWindow(QMainWindow):
         self.side_combo.addItem("仅左侧", "left")
         self.side_combo.addItem("仅右侧", "right")
         self._select_data(self.limb_combo, self.settings_data.get("limb", "arm"))
-        configured_side = self.settings_data.get("side", "both_simultaneous")
+        configured_side = self.settings_data.get("side", "left")
         if configured_side == "both":
             configured_side = "both_simultaneous"
         self._select_data(self.side_combo, configured_side)
@@ -198,29 +197,26 @@ class LimbInspectionWindow(QMainWindow):
         self.motion_mode.addItem("安全全行程（碰撞约束）", "safe_range")
         self.motion_mode.addItem("小幅往复", "small_motion")
         self._select_data(
-            self.motion_mode, self.settings_data.get("motion_mode", "safe_range"))
-        sim_max = SIMULATION_DEBUG_MAX if not self.controller.hardware_mode else None
+            self.motion_mode, self.settings_data.get("motion_mode", "small_motion"))
         self.amplitude = self._double(
-            0.001 if sim_max else 0.1, sim_max or 20.0,
-            "amplitude_deg", 5.0, " °")
+            0.1, 20.0,
+            "amplitude_deg", 3.0, " °")
         self.move_sec = self._double(
-            0.001 if sim_max else 0.2, sim_max or 20.0,
-            "move_sec", 1.5, " s")
+            0.2, 20.0,
+            "move_sec", 2.0, " s")
         self.hold_sec = self._double(
-            0.0, sim_max or 10.0, "hold_sec", 0.5, " s")
+            0.0, 10.0, "hold_sec", 0.5, " s")
         self.range_speed = self._double(
-            0.001 if sim_max else 1.0, sim_max or 30.0,
-            "range_speed_deg_s", 20.0, " °/s")
+            1.0, 30.0,
+            "range_speed_deg_s", 10.0, " °/s")
         self.collision_margin = self._double(
-            0.0 if sim_max else 5.0, sim_max or 20.0,
+            5.0, 20.0,
             "collision_margin_deg", 5.0, " °")
         self.mechanical_margin = self._double(
-            0.0 if sim_max else 0.5, sim_max or 20.0,
+            0.5, 20.0,
             "mechanical_margin_deg", 2.0, " °")
         self.cycles = QSpinBox()
-        self.cycles.setRange(
-            1, SIMULATION_DEBUG_MAX_CYCLES
-            if sim_max else 10)
+        self.cycles.setRange(1, 10)
         self.cycles.setValue(int(self.settings_data.get("cycles", 1)))
         motion.addRow("检测模式", self.motion_mode)
         motion.addRow("单向幅度", self.amplitude)
@@ -237,19 +233,19 @@ class LimbInspectionWindow(QMainWindow):
         self.limits_group = QGroupBox("合格判定")
         limits = QFormLayout(self.limits_group)
         self.tracking = self._double(
-            0.001 if sim_max else 0.1, sim_max or 30.0,
+            0.1, 30.0,
             "tracking_tolerance_deg", 2.0, " °")
         self.response = self._double(
-            0.0 if sim_max else 0.05, sim_max or 1.2,
+            0.05, 1.2,
             "minimum_motion_ratio", 0.6, "")
         self.cross = self._double(
-            0.001 if sim_max else 0.1, sim_max or 30.0,
+            0.1, 30.0,
             "cross_axis_limit_deg", 3.0, " °")
         self.max_velocity = self._double(
-            0.001 if sim_max else 1.0, sim_max or 500.0,
+            1.0, 500.0,
             "max_velocity_deg_s", 30.0, " °/s")
         self.max_effort = self._double(
-            0.001 if sim_max else 0.1, sim_max or 1000.0,
+            0.1, 1000.0,
             "max_effort_nm", 80.0, " Nm")
         limits.addRow("最大跟踪误差", self.tracking)
         limits.addRow("最小运动比例", self.response)
@@ -461,7 +457,7 @@ class LimbInspectionWindow(QMainWindow):
             max_velocity_deg_s=self.max_velocity.value(),
             max_effort_nm=self.max_effort.value(),
         )
-        settings.validate(simulation_debug=not self.controller.hardware_mode)
+        settings.validate()
         return settings
 
     def _save_settings(self):

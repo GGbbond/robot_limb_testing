@@ -16,6 +16,8 @@ def generate_launch_description():
     rate = LaunchConfiguration("control_rate_hz")
     timeout = LaunchConfiguration("feedback_timeout_sec")
     initialization = LaunchConfiguration("initialization_sec")
+    velocity_fault_duration = LaunchConfiguration("velocity_fault_duration_sec")
+    max_command_gap = LaunchConfiguration("max_command_gap_sec")
     bench_height = LaunchConfiguration("simulation_bench_height_m")
     simulation = Node(
         package="bxi_example_py_elf3", executable="bxi_elf3_hidden_simulation",
@@ -30,13 +32,18 @@ def generate_launch_description():
             "control_rate_hz": ParameterValue(rate, value_type=float),
             "feedback_timeout_sec": ParameterValue(timeout, value_type=float),
             "initialization_sec": ParameterValue(initialization, value_type=float),
+            "velocity_fault_duration_sec": ParameterValue(
+                velocity_fault_duration, value_type=float),
+            "max_command_gap_sec": ParameterValue(max_command_gap, value_type=float),
             "simulation_bench_height_m": ParameterValue(
                 bench_height, value_type=float),
         }])
     return LaunchDescription([
         DeclareLaunchArgument("control_rate_hz", default_value="100.0"),
-        DeclareLaunchArgument("feedback_timeout_sec", default_value="0.25"),
-        DeclareLaunchArgument("initialization_sec", default_value="3.0"),
+        DeclareLaunchArgument("feedback_timeout_sec", default_value="0.20"),
+        DeclareLaunchArgument("initialization_sec", default_value="10.0"),
+        DeclareLaunchArgument("velocity_fault_duration_sec", default_value="0.01"),
+        DeclareLaunchArgument("max_command_gap_sec", default_value="0.08"),
         DeclareLaunchArgument(
             "simulation_bench_height_m", default_value="1.7",
             description="Suspended test-bench base height in metres"),
