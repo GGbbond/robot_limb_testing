@@ -11,7 +11,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
-    os.environ.setdefault("ROS_LOCALHOST_ONLY", "1")
+    os.environ["ROS_LOCALHOST_ONLY"] = "1"
     model_file = os.path.join(
         get_package_share_path("bxi_example_py_elf3"), "data", "elf3.xml")
     rate = LaunchConfiguration("control_rate_hz")

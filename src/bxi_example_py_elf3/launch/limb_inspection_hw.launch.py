@@ -16,7 +16,7 @@ def _require_root(_context):
 
 
 def generate_launch_description():
-    os.environ.setdefault("ROS_LOCALHOST_ONLY", "1")
+    os.environ["ROS_LOCALHOST_ONLY"] = "1"
     rate = LaunchConfiguration("control_rate_hz")
     timeout = LaunchConfiguration("feedback_timeout_sec")
     initialization = LaunchConfiguration("initialization_sec")

@@ -358,10 +358,10 @@ MuJoCo 仿真与实机使用相同的参数和安全阈值。界面输入框不�
 初始化时间 `10 s`、最大命令间隔 `0.08 s`、持续超速判定时间 `0.01 s`。
 `simulation_bench_height_m` 只描述 MuJoCo 台架高度，不属于实机运动参数。
 
-项目启动脚本默认设置 `ROS_LOCALHOST_ONLY=1`，只接收本机仿真或硬件反馈，避免局域网
-其他开发机在相同 ROS domain 下发布同名话题造成角度跳变。如果确实需要跨主机连接，
-可显式使用 `ROS_LOCALHOST_ONLY=0 ./scripts/run_limb_inspection.sh ...`，但必须先确认
-`joint_states` 和 `actuators_cmds` 各自只有一个发布者。
+项目启动脚本及仿真/实机 launch 都强制设置 `ROS_LOCALHOST_ONLY=1`，只接收本机仿真
+或硬件反馈。外部环境中的 `ROS_LOCALHOST_ONLY=0` 会被覆盖，局域网其他开发机即使
+使用相同 ROS domain，也不能向本程序注入同名 `joint_states` 或 `actuators_cmds`。
+本机重复发布者仍会被单实例锁和发布者数量检查拦截。
 
 ### 4. 完成安全确认
 

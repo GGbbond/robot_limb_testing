@@ -5,9 +5,9 @@ APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:-simulation}"
 
 # Limb inspection, its hardware driver, and the MuJoCo backend run on the
-# same robot controller.  Keep DDS discovery local by default so another
+# same robot controller.  Force DDS discovery to remain local so another
 # development PC on ROS domain 0 cannot inject same-named joint feedback.
-export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-1}"
+export ROS_LOCALHOST_ONLY=1
 
 if [ "$MODE" != "simulation" ] && [ "$MODE" != "hardware" ]; then
     echo "用法: $0 [simulation|hardware]" >&2
