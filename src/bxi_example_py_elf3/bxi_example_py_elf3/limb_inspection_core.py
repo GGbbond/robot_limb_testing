@@ -4,8 +4,9 @@ This module intentionally has no ROS or Qt dependency so the sequence and
 acceptance rules can be unit tested on a development PC.
 """
 
+import time
 from dataclasses import asdict, dataclass
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -201,6 +202,28 @@ def selected_joint_groups(limb: str, side: str) -> Tuple[Tuple[str, ...], ...]:
             LIMB_JOINTS[(limb, "right")],
         ))
     return tuple((name,) for name in selected_joints(limb, side))
+
+
+def selected_feedback_summary(
+        joint_names: Sequence[str], seen: Sequence[bool],
+        feedback_at: Sequence[float], timeout_sec: float,
+        now: Optional[float] = None) -> Tuple[int, int, Optional[float]]:
+    """Return fresh/total and the worst age for the selected joints only."""
+    current = time.monotonic() if now is None else float(now)
+    fresh = 0
+    ages = []
+    missing = False
+    for name in joint_names:
+        index = JOINT_NAMES.index(name)
+        if not bool(seen[index]):
+            missing = True
+            continue
+        age = max(0.0, current - float(feedback_at[index]))
+        ages.append(age)
+        if age <= timeout_sec:
+            fresh += 1
+    worst_age = None if missing else max(ages, default=None)
+    return fresh, len(joint_names), worst_age
 
 
 def minimum_jerk(progress: float) -> float:

@@ -7,6 +7,7 @@ from threading import RLock
 
 import numpy as np
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, qos_profile_sensor_data
 from geometry_msgs.msg import Pose
@@ -80,17 +81,31 @@ class LimbInspectionController(Node):
         )
         self.command_topic = self.topic_prefix + "actuators_cmds"
         self.feedback_topic = self.topic_prefix + "joint_states"
+        # A MultiThreadedExecutor only runs callbacks concurrently when their
+        # callback groups allow it.  Keeping every entity in the node's
+        # default mutually-exclusive group made a slow collision check in the
+        # 100 Hz control timer starve fresh joint feedback.  Separate groups
+        # preserve single-entry semantics for each callback type while
+        # allowing feedback and reset responses to be serviced independently
+        # of control work.  self.lock remains the state synchronization
+        # boundary between these groups and the Qt thread.
+        self.feedback_callback_group = MutuallyExclusiveCallbackGroup()
+        self.control_callback_group = MutuallyExclusiveCallbackGroup()
+        self.service_callback_group = MutuallyExclusiveCallbackGroup()
         self.publisher = self.create_publisher(
             bxi_msg.ActuatorCmds, self.command_topic, qos)
         self.subscription = self.create_subscription(
             JointState, self.feedback_topic,
-            self._joint_callback, qos)
+            self._joint_callback, qos,
+            callback_group=self.feedback_callback_group)
         self.reset_client = self.create_client(
-            bxi_srv.RobotReset, self.topic_prefix + "robot_reset")
+            bxi_srv.RobotReset, self.topic_prefix + "robot_reset",
+            callback_group=self.service_callback_group)
         self.sim_reset_client = None
         if not self.hardware_mode:
             self.sim_reset_client = self.create_client(
-                bxi_srv.SimulationReset, self.topic_prefix + "sim_reset")
+                bxi_srv.SimulationReset, self.topic_prefix + "sim_reset",
+                callback_group=self.service_callback_group)
 
         self.lock = RLock()
         self.events = SimpleQueue()
@@ -158,7 +173,8 @@ class LimbInspectionController(Node):
                 self.collision_guard.set_base_height(
                     self.simulation_bench_height_m)
         self.timer = self.create_timer(
-            1.0 / self.control_rate_hz, self._timer_callback)
+            1.0 / self.control_rate_hz, self._timer_callback,
+            callback_group=self.control_callback_group)
         self._event("info", "控制器已启动，当前为%s模式" % (
             "实机" if self.hardware_mode else "仿真"))
 
@@ -192,6 +208,7 @@ class LimbInspectionController(Node):
                 "effort": self.effort.copy(),
                 "command": self.command.copy(),
                 "seen": self.seen.copy(),
+                "feedback_at": self.feedback_at.copy(),
                 "feedback_age": time.monotonic() - float(np.max(self.feedback_at)),
                 "results": copy.deepcopy(self.results),
             }

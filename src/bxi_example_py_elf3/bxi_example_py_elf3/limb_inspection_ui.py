@@ -33,7 +33,8 @@ from .limb_inspection_config import (
     DEFAULT_REPORT_DIRECTORY, PARAMETER_INPUT_MAX, load_settings, save_settings,
 )
 from .limb_inspection_core import (
-    JOINT_LABELS, JOINT_NAMES, InspectionSettings, selected_joints,
+    JOINT_LABELS, JOINT_NAMES, InspectionSettings,
+    selected_feedback_summary, selected_joints,
 )
 from .limb_inspection_report import export_report
 from .limb_simulation_view import SimulationViewport
@@ -504,12 +505,18 @@ class LimbInspectionWindow(QMainWindow):
             " + ".join(JOINT_LABELS.get(name, name) for name in current_names)
             if current_names else "-")
         self.progress.setValue(int(round(snap["progress"])))
-        active_seen = [snap["seen"][i] for i in range(len(JOINT_NAMES))]
-        seen_count = int(sum(active_seen))
-        age = snap["feedback_age"]
-        self.feedback_label.setText("%d/29，最新 %.3fs" % (seen_count, max(0.0, age)))
+        selected_recipe = selected_joints(
+            self.limb_combo.currentData(), self.side_combo.currentData())
+        fresh_count, selected_count, worst_age = selected_feedback_summary(
+            selected_recipe, snap["seen"], snap["feedback_at"],
+            self.controller.feedback_timeout_sec)
+        worst_text = "未收到" if worst_age is None else "%.3fs" % worst_age
+        self.feedback_label.setText(
+            "所选反馈 %d/%d，最差 %s" % (
+                fresh_count, selected_count, worst_text))
         self.feedback_label.setStyleSheet(
-            "color:#47d18c" if age <= self.controller.feedback_timeout_sec else "color:#ff6b6b")
+            "color:#47d18c" if fresh_count == selected_count
+            else "color:#ff6b6b")
         locked = snap["test_running"] or snap["returning"] or bool(self.controller.reset_step)
         for widget in (
                 self.limb_combo, self.side_combo,
@@ -518,8 +525,6 @@ class LimbInspectionWindow(QMainWindow):
                 self.full_range_check):
             widget.setEnabled(not locked)
         self.init_button.setEnabled(not locked and not snap["fault_latched"])
-        selected_recipe = selected_joints(
-            self.limb_combo.currentData(), self.side_combo.currentData())
         selection_initialized = self.initialized_recipe == selected_recipe
         can_start = (snap["initialized"] and selection_initialized and not locked and
                      not snap["fault_latched"])

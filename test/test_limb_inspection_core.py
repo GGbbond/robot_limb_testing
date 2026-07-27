@@ -3,7 +3,7 @@ import pytest
 
 from bxi_example_py_elf3.limb_inspection_core import (
     JOINT_NAMES, InspectionSettings, evaluate_joint, minimum_jerk,
-    selected_joint_groups, selected_joints,
+    selected_feedback_summary, selected_joint_groups, selected_joints,
 )
 from bxi_example_py_elf3.limb_inspection_posture import (
     compact_posture, mirrored_target_ranges, safe_range_waypoints,
@@ -20,6 +20,36 @@ def test_selection_is_bilateral_but_serial_ordered():
     assert len(simultaneous) == 6
     assert simultaneous[0] == ("l_ankle_x_joint", "r_ankle_x_joint")
     assert simultaneous[-1] == ("l_hip_y_joint", "r_hip_y_joint")
+
+
+def test_feedback_summary_uses_selected_fresh_joints_and_worst_age():
+    seen = np.zeros(len(JOINT_NAMES), dtype=bool)
+    feedback_at = np.zeros(len(JOINT_NAMES))
+    selected = ("l_hip_y_joint", "l_hip_x_joint")
+    first = JOINT_NAMES.index(selected[0])
+    second = JOINT_NAMES.index(selected[1])
+    unrelated = JOINT_NAMES.index("r_hip_y_joint")
+    seen[[first, second, unrelated]] = True
+    feedback_at[first] = 99.95
+    feedback_at[second] = 99.70
+    feedback_at[unrelated] = 100.0
+
+    fresh, total, worst_age = selected_feedback_summary(
+        selected, seen, feedback_at, timeout_sec=0.2, now=100.0)
+
+    assert (fresh, total) == (1, 2)
+    assert np.isclose(worst_age, 0.3)
+
+
+def test_feedback_summary_marks_never_seen_selected_joint_missing():
+    seen = np.zeros(len(JOINT_NAMES), dtype=bool)
+    feedback_at = np.zeros(len(JOINT_NAMES))
+    selected = ("l_hip_y_joint",)
+
+    fresh, total, worst_age = selected_feedback_summary(
+        selected, seen, feedback_at, timeout_sec=0.2, now=100.0)
+
+    assert (fresh, total, worst_age) == (0, 1, None)
 
 
 def test_minimum_jerk_endpoints():
