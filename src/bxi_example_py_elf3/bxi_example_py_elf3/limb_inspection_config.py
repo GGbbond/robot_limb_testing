@@ -18,8 +18,6 @@ USER_SETTINGS = CONFIG_DIR / "settings.json"
 LEGACY_HARDWARE_USER_SETTINGS = CONFIG_DIR / "settings_hardware.json"
 DEFAULT_REPORT_DIRECTORY = "~/BXI/limb_inspection_reports"
 PARAMETER_INPUT_MAX = 1_000_000_000.0
-PARAMETER_CYCLES_MAX = 2_147_483_647
-PARAMETER_CYCLES_MIN = -2_147_483_648
 
 
 def defaults_path():
@@ -45,6 +43,9 @@ def load_settings():
                 result.update(data)
         except (OSError, ValueError):
             pass
+    # Ignore keys written by releases that still offered small-motion mode.
+    for obsolete in ("motion_mode", "amplitude_deg", "cycles"):
+        result.pop(obsolete, None)
     return result
 
 

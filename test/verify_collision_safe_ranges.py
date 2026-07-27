@@ -70,7 +70,7 @@ def main():
         root / "src/bxi_example_py_elf3/data/elf3.xml")
     guard.set_base_height(1.7)
     settings = InspectionSettings(
-        motion_mode="safe_range", collision_margin_deg=5.0,
+        collision_margin_deg=5.0,
         mechanical_margin_deg=2.0)
 
     joints = selected_joints("arm", "both") + selected_joints("leg", "both")

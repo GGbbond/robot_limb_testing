@@ -86,22 +86,3 @@ def safe_range_waypoints(active_joint_names, target_ranges):
         {name: target_ranges[name][0] for name in names},
         {name: target_ranges[name][1] for name in names},
     ]
-
-
-def small_motion_waypoints(active_joint_names, centers, amplitude, cycles,
-                           target_ranges=None):
-    """Return mirrored small-motion targets followed by each center crossing."""
-    result = []
-    for offset in ((1.0, 0.0, -1.0, 0.0) * int(cycles)):
-        targets = {}
-        for name in active_joint_names:
-            direction = (
-                -1.0 if name.startswith("r_") and
-                uses_opposite_bilateral_sign(name) else 1.0)
-            value = centers[name] + offset * amplitude * direction
-            if target_ranges is not None:
-                low, high = target_ranges[name]
-                value = float(np.clip(value, low, high))
-            targets[name] = value
-        result.append(targets)
-    return result

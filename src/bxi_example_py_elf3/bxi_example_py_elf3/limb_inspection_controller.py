@@ -30,11 +30,9 @@ from .limb_inspection_core import (
     safe_joint_range,
     selected_joint_groups,
     selected_joints,
-    validate_center,
 )
 from .limb_inspection_posture import (
     compact_posture, mirrored_target_ranges, safe_range_waypoints,
-    small_motion_waypoints,
 )
 
 
@@ -136,7 +134,6 @@ class LimbInspectionController(Node):
         self.segment_start_factor = 0.0
         self.segment_target_factor = 0.0
         self.current_waypoints = []
-        self.current_waypoint_is_posture = []
         self.segment_start_positions = {}
         self.segment_target_positions = {}
         self.joint_target_ranges = {}
@@ -348,87 +345,66 @@ class LimbInspectionController(Node):
                 raise RuntimeError("检测到多个关节命令发布者，请关闭其他控制器")
             self.center = self.position.copy()
             self.joint_target_ranges = {}
-            if settings.motion_mode == "safe_range":
-                if self.collision_guard is None:
-                    raise RuntimeError("安全全行程需要启用 MuJoCo 碰撞预测器")
-                if self.hardware_mode and not settings.full_range_confirmed:
+            if self.collision_guard is None:
+                raise RuntimeError("安全全行程需要启用 MuJoCo 碰撞预测器")
+            if self.hardware_mode and not settings.full_range_confirmed:
+                raise RuntimeError(
+                    "实机安全全行程尚未确认：请确认线缆、夹具和台架范围")
+            reference_names = tuple(
+                JOINT_NAMES[index] for index in self.controlled_indices
+                if self.seen[index])
+            non_neutral = [
+                name for name in reference_names
+                if abs(np.rad2deg(self.center[JOINT_NAMES.index(name)])) > 10.0
+            ]
+            if non_neutral:
+                raise RuntimeError(
+                    "安全全行程基于零位姿态；以下关节偏离零位超过 10°：" +
+                    ", ".join(non_neutral))
+            self.joint_target_ranges = {
+                name: safe_joint_range(name, settings)
+                for name in self.selected_names
+            }
+            if settings.side == "both_simultaneous":
+                self.joint_target_ranges = mirrored_target_ranges(
+                    self.selected_groups, self.joint_target_ranges,
+                    settings.collision_margin_deg)
+            outside_margined_range = []
+            for name, (low, high) in self.joint_target_ranges.items():
+                index = JOINT_NAMES.index(name)
+                value = self.center[index]
+                model_low_deg, model_high_deg = \
+                    MODEL_COLLISION_FREE_RANGE_DEG[name]
+                raw_low = max(
+                    float(POSITION_MIN[index]),
+                    float(np.deg2rad(model_low_deg)))
+                raw_high = min(
+                    float(POSITION_MAX[index]),
+                    float(np.deg2rad(model_high_deg)))
+                if not raw_low <= value <= raw_high:
                     raise RuntimeError(
-                        "实机安全全行程尚未确认：请确认线缆、夹具和台架范围"
-                    )
-                reference_names = tuple(
-                    JOINT_NAMES[index] for index in self.controlled_indices
-                    if self.seen[index]
-                )
-                non_neutral = [
-                    name for name in reference_names
-                    if abs(np.rad2deg(self.center[JOINT_NAMES.index(name)])) > 10.0
-                ]
-                if non_neutral:
+                        "%s 的当前位置不在模型无碰撞范围内" % name)
+                if not low <= value <= high:
+                    outside_margined_range.append(name)
+            center_collisions = self.collision_guard.collisions(self.center)
+            if center_collisions:
+                geom_1, geom_2, distance = center_collisions[0]
+                raise RuntimeError(
+                    "当前位置存在模型碰撞：%s ↔ %s（侵入 %.1f mm）" %
+                    (geom_1, geom_2, -1000.0 * distance))
+            for name in self.selected_names:
+                visual_hits = self.collision_guard.visual_mesh_collisions(
+                    self.center, name)
+                if visual_hits:
+                    body_1, body_2, distance = visual_hits[0]
                     raise RuntimeError(
-                        "安全全行程基于零位姿态；以下关节偏离零位超过 10°：" +
-                        ", ".join(non_neutral)
-                    )
-                self.joint_target_ranges = {
-                    name: safe_joint_range(name, settings)
-                    for name in self.selected_names
-                }
-                if settings.side == "both_simultaneous":
-                    self.joint_target_ranges = mirrored_target_ranges(
-                        self.selected_groups, self.joint_target_ranges,
-                        settings.collision_margin_deg)
-                outside_margined_range = []
-                for name, (low, high) in self.joint_target_ranges.items():
-                    index = JOINT_NAMES.index(name)
-                    value = self.center[JOINT_NAMES.index(name)]
-                    model_low_deg, model_high_deg = \
-                        MODEL_COLLISION_FREE_RANGE_DEG[name]
-                    raw_low = max(
-                        float(POSITION_MIN[index]),
-                        float(np.deg2rad(model_low_deg)))
-                    raw_high = min(
-                        float(POSITION_MAX[index]),
-                        float(np.deg2rad(model_high_deg)))
-                    if not raw_low <= value <= raw_high:
-                        raise RuntimeError(
-                            "%s 的当前位置不在模型无碰撞范围内" % name
-                        )
-                    if not low <= value <= high:
-                        outside_margined_range.append(name)
-                center_collisions = self.collision_guard.collisions(self.center)
-                if center_collisions:
-                    geom_1, geom_2, distance = center_collisions[0]
-                    raise RuntimeError(
-                        "当前位置存在模型碰撞：%s ↔ %s（侵入 %.1f mm）" %
-                        (geom_1, geom_2, -1000.0 * distance))
-                for name in self.selected_names:
-                    visual_hits = self.collision_guard.visual_mesh_collisions(
-                        self.center, name)
-                    if visual_hits:
-                        body_1, body_2, distance = visual_hits[0]
-                        raise RuntimeError(
-                            "当前位置存在视觉外壳侵入：%s ↔ %s（侵入 %.1f mm）" %
-                            (body_1, body_2, -1000.0 * distance))
-                if outside_margined_range:
-                    self._event(
-                        "warning",
-                        "当前位置位于带余量目标范围之外，将先平滑进入安全目标：" +
-                        ", ".join(outside_margined_range))
-            else:
-                validate_center(self.selected_names, self.center,
-                                settings.amplitude_rad)
-                self.joint_target_ranges = {
-                    name: (
-                        float(self.center[JOINT_NAMES.index(name)] -
-                              settings.amplitude_rad),
-                        float(self.center[JOINT_NAMES.index(name)] +
-                              settings.amplitude_rad),
-                    )
-                    for name in self.selected_names
-                }
-                if settings.side == "both_simultaneous":
-                    self.joint_target_ranges = mirrored_target_ranges(
-                        self.selected_groups, self.joint_target_ranges,
-                        settings.collision_margin_deg)
+                        "当前位置存在视觉外壳侵入：%s ↔ %s（侵入 %.1f mm）" %
+                        (body_1, body_2, -1000.0 * distance))
+            if outside_margined_range:
+                self._event(
+                    "warning",
+                    "当前位置位于带余量目标范围之外，将先平滑进入安全目标：" +
+                    ", ".join(outside_margined_range))
             self.command = self.center.copy()
             self.results = []
             self.samples = []
@@ -672,43 +648,29 @@ class LimbInspectionController(Node):
         self.segment_started_at = now
         self.joint_started_at = now
         self.current_waypoints = []
-        self.current_waypoint_is_posture = []
         folded = dict(centers)
         folded.update(posture)
         if posture:
             self.current_waypoints.append(dict(folded))
-            self.current_waypoint_is_posture.append(True)
-        if self.settings.motion_mode == "safe_range":
-            active_waypoints = safe_range_waypoints(
-                self.current_joint_names, self.joint_target_ranges)
-            active_waypoints.append({
-                name: centers[name] for name in self.current_joint_names})
-            ranges = [
-                "%s %.1f°→%.1f°" % (
-                    name,
-                    np.rad2deg(self.joint_target_ranges[name][0]),
-                    np.rad2deg(self.joint_target_ranges[name][1]))
-                for name in self.current_joint_names
-            ]
-            self.detail = "安全全行程%s检测 %s" % (
-                "镜像" if len(self.current_joint_names) > 1 else "",
-                "；".join(ranges))
-        else:
-            active_waypoints = small_motion_waypoints(
-                self.current_joint_names, centers,
-                self.settings.amplitude_rad, self.settings.cycles,
-                self.joint_target_ranges)
-            self.detail = "小幅往复%s检测 %s" % (
-                "镜像" if len(self.current_joint_names) > 1 else "",
-                ", ".join(self.current_joint_names))
+        active_waypoints = safe_range_waypoints(
+            self.current_joint_names, self.joint_target_ranges)
+        active_waypoints.append({
+            name: centers[name] for name in self.current_joint_names})
+        ranges = [
+            "%s %.1f°→%.1f°" % (
+                name, np.rad2deg(self.joint_target_ranges[name][0]),
+                np.rad2deg(self.joint_target_ranges[name][1]))
+            for name in self.current_joint_names
+        ]
+        self.detail = "安全全行程%s检测 %s" % (
+            "镜像" if len(self.current_joint_names) > 1 else "",
+            "；".join(ranges))
         for active_targets in active_waypoints:
             target = dict(folded)
             target.update(active_targets)
             self.current_waypoints.append(target)
-            self.current_waypoint_is_posture.append(False)
         if posture:
             self.current_waypoints.append(dict(centers))
-            self.current_waypoint_is_posture.append(True)
             posture_text = ", ".join(
                 "%s %.1f°" % (name, np.rad2deg(value))
                 for name, value in posture.items())
@@ -717,16 +679,9 @@ class LimbInspectionController(Node):
         self.segment_target_positions = dict(self.current_waypoints[0])
 
     def _group_segment_count(self, group):
-        base = 3 if self.settings.motion_mode == "safe_range" \
-            else 4 * self.settings.cycles
-        return base + (2 if compact_posture(group) else 0)
+        return 3 + (2 if compact_posture(group) else 0)
 
     def _current_move_duration(self):
-        posture_transition = self.current_waypoint_is_posture[
-            self.segment_cursor]
-        if (self.settings.motion_mode != "safe_range" and
-                not posture_transition):
-            return self.settings.move_sec
         travel_deg = max(
             abs(np.rad2deg(
                 self.segment_target_positions[name] -

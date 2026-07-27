@@ -22,7 +22,7 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
     QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-    QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter,
+    QMainWindow, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSplitter,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from rclpy.executors import MultiThreadedExecutor
@@ -30,8 +30,7 @@ from rclpy.utilities import remove_ros_args
 
 from .limb_inspection_controller import LimbInspectionController
 from .limb_inspection_config import (
-    DEFAULT_REPORT_DIRECTORY, PARAMETER_CYCLES_MAX, PARAMETER_CYCLES_MIN,
-    PARAMETER_INPUT_MAX, load_settings, save_settings,
+    DEFAULT_REPORT_DIRECTORY, PARAMETER_INPUT_MAX, load_settings, save_settings,
 )
 from .limb_inspection_core import (
     JOINT_LABELS, JOINT_NAMES, InspectionSettings, selected_joints,
@@ -194,14 +193,6 @@ class LimbInspectionWindow(QMainWindow):
 
         self.motion_group = QGroupBox("运动参数")
         motion = QFormLayout(self.motion_group)
-        self.motion_mode = QComboBox()
-        self.motion_mode.addItem("安全全行程（碰撞约束）", "safe_range")
-        self.motion_mode.addItem("小幅往复", "small_motion")
-        self._select_data(
-            self.motion_mode, self.settings_data.get("motion_mode", "small_motion"))
-        self.amplitude = self._double(
-            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
-            "amplitude_deg", 3.0, " °")
         self.move_sec = self._double(
             -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "move_sec", 2.0, " s")
@@ -217,20 +208,12 @@ class LimbInspectionWindow(QMainWindow):
         self.mechanical_margin = self._double(
             -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "mechanical_margin_deg", 2.0, " °")
-        self.cycles = QSpinBox()
-        self.cycles.setRange(PARAMETER_CYCLES_MIN, PARAMETER_CYCLES_MAX)
-        self.cycles.setValue(int(self.settings_data.get("cycles", 1)))
-        motion.addRow("检测模式", self.motion_mode)
-        motion.addRow("单向幅度", self.amplitude)
         motion.addRow("最短单程时间", self.move_sec)
         motion.addRow("全行程最高速度", self.range_speed)
         motion.addRow("模型碰撞余量", self.collision_margin)
         motion.addRow("机械限位余量", self.mechanical_margin)
         motion.addRow("端点保持", self.hold_sec)
-        motion.addRow("正反循环", self.cycles)
         layout.addWidget(self.motion_group)
-        self.motion_mode.currentIndexChanged.connect(self._update_motion_mode_ui)
-        self._update_motion_mode_ui()
 
         self.limits_group = QGroupBox("合格判定")
         limits = QFormLayout(self.limits_group)
@@ -263,7 +246,6 @@ class LimbInspectionWindow(QMainWindow):
         self.full_range_check.setStyleSheet(
             "QCheckBox { color:#ff9f43; font-weight:600; }")
         layout.addWidget(self.full_range_check)
-        self._update_motion_mode_ui()
         buttons = QGridLayout()
         self.init_button = QPushButton("1. 初始化机器人")
         self.start_button = QPushButton("2. 一键检测")
@@ -431,24 +413,10 @@ class LimbInspectionWindow(QMainWindow):
         if index >= 0:
             combo.setCurrentIndex(index)
 
-    def _update_motion_mode_ui(self):
-        full_range = self.motion_mode.currentData() == "safe_range"
-        self.amplitude.setEnabled(not full_range)
-        self.cycles.setEnabled(not full_range)
-        self.range_speed.setEnabled(full_range)
-        self.collision_margin.setEnabled(full_range)
-        self.mechanical_margin.setEnabled(full_range)
-        if hasattr(self, "full_range_check"):
-            self.full_range_check.setVisible(full_range)
-            if not full_range:
-                self.full_range_check.setChecked(False)
-
     def _settings(self):
         settings = InspectionSettings(
             limb=self.limb_combo.currentData(), side=self.side_combo.currentData(),
-            motion_mode=self.motion_mode.currentData(),
-            amplitude_deg=self.amplitude.value(), move_sec=self.move_sec.value(),
-            hold_sec=self.hold_sec.value(), cycles=self.cycles.value(),
+            move_sec=self.move_sec.value(), hold_sec=self.hold_sec.value(),
             collision_margin_deg=self.collision_margin.value(),
             mechanical_margin_deg=self.mechanical_margin.value(),
             range_speed_deg_s=self.range_speed.value(),
@@ -499,19 +467,16 @@ class LimbInspectionWindow(QMainWindow):
             if not self.safety_check.isChecked():
                 raise RuntimeError("请先完成并勾选台架安全确认")
             settings = self._settings()
-            if (settings.motion_mode == "safe_range" and
-                    not self.full_range_check.isChecked()):
+            if not self.full_range_check.isChecked():
                 raise RuntimeError("请确认线缆、夹具和全行程范围无干涉")
-            if settings.motion_mode == "safe_range":
-                text = (
-                    "安全全行程会让每个关节依次接近模型无碰撞边界，"
-                    "单个大角度关节可能运动数十秒。\n\n"
-                    "确认人员已离开、急停可用并继续？"
-                )
-                if QMessageBox.question(
-                        self, "确认安全全行程", text,
-                        QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
-                    return
+            text = (
+                "安全全行程会让每个关节依次接近模型无碰撞边界，"
+                "单个大角度关节可能运动数十秒。\n\n"
+                "确认人员已离开、急停可用并继续？")
+            if QMessageBox.question(
+                    self, "确认安全全行程", text,
+                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                return
             self._save_settings()
             self.plot_time.clear()
             self.plot_command.clear()
@@ -547,13 +512,11 @@ class LimbInspectionWindow(QMainWindow):
             "color:#47d18c" if age <= self.controller.feedback_timeout_sec else "color:#ff6b6b")
         locked = snap["test_running"] or snap["returning"] or bool(self.controller.reset_step)
         for widget in (
-                self.limb_combo, self.side_combo, self.motion_mode,
-                self.amplitude, self.move_sec, self.hold_sec, self.cycles,
+                self.limb_combo, self.side_combo,
+                self.move_sec, self.hold_sec,
                 self.range_speed, self.collision_margin, self.mechanical_margin,
                 self.full_range_check):
             widget.setEnabled(not locked)
-        if not locked:
-            self._update_motion_mode_ui()
         self.init_button.setEnabled(not locked and not snap["fault_latched"])
         selected_recipe = selected_joints(
             self.limb_combo.currentData(), self.side_combo.currentData())

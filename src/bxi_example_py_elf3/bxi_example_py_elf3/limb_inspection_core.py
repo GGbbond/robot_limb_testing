@@ -120,11 +120,8 @@ JOINT_KD = np.array([
 class InspectionSettings:
     limb: str = "arm"
     side: str = "left"
-    motion_mode: str = "small_motion"
-    amplitude_deg: float = 3.0
     move_sec: float = 2.0
     hold_sec: float = 0.5
-    cycles: int = 1
     collision_margin_deg: float = 5.0
     mechanical_margin_deg: float = 2.0
     range_speed_deg_s: float = 10.0
@@ -141,10 +138,8 @@ class InspectionSettings:
         if self.side not in ("left", "right", "both", "both_simultaneous"):
             raise ValueError(
                 "side must be left, right, both or both_simultaneous")
-        if self.motion_mode not in ("small_motion", "safe_range"):
-            raise ValueError("motion_mode must be small_motion or safe_range")
         numeric_values = (
-            self.amplitude_deg, self.move_sec, self.hold_sec,
+            self.move_sec, self.hold_sec,
             self.collision_margin_deg, self.mechanical_margin_deg,
             self.range_speed_deg_s, self.tracking_tolerance_deg,
             self.minimum_motion_ratio, self.cross_axis_limit_deg,
@@ -152,14 +147,10 @@ class InspectionSettings:
         )
         if not all(np.isfinite(value) for value in numeric_values):
             raise ValueError("检测参数必须是有限数值")
-        if self.amplitude_deg <= 0.0:
-            raise ValueError("测试幅度必须大于 0°")
         if self.move_sec <= 0.0:
             raise ValueError("单程时间必须大于 0s")
         if self.hold_sec < 0.0:
             raise ValueError("保持时间不能小于 0s")
-        if self.cycles < 1:
-            raise ValueError("循环次数必须大于或等于 1")
         if self.collision_margin_deg < 0.0:
             raise ValueError("碰撞余量不能小于 0°")
         if self.mechanical_margin_deg < 0.0:
@@ -171,11 +162,6 @@ class InspectionSettings:
             raise ValueError("判定阈值必须大于 0")
         if self.minimum_motion_ratio < 0.0:
             raise ValueError("最小响应比例不能小于 0")
-
-    @property
-    def amplitude_rad(self) -> float:
-        return float(np.deg2rad(self.amplitude_deg))
-
 
 @dataclass
 class JointResult:
@@ -237,20 +223,6 @@ def safe_joint_range(joint_name: str, settings: InspectionSettings) -> Tuple[flo
     return low, high
 
 
-def validate_center(joints: Sequence[str], center: np.ndarray,
-                    amplitude_rad: float, margin_rad: float = 0.02) -> None:
-    for name in joints:
-        index = JOINT_NAMES.index(name)
-        low = POSITION_MIN[index] + margin_rad
-        high = POSITION_MAX[index] - margin_rad
-        if center[index] - amplitude_rad < low or center[index] + amplitude_rad > high:
-            raise ValueError(
-                "%s 的当前位置 %.2f° 距离软件限位过近，无法执行 ±%.2f° 测试"
-                % (JOINT_LABELS[name], np.rad2deg(center[index]),
-                   np.rad2deg(amplitude_rad))
-            )
-
-
 def evaluate_joint(joint_name: str, settings: InspectionSettings,
                    baseline: np.ndarray, positions: np.ndarray,
                    commands: np.ndarray, velocities: np.ndarray,
@@ -259,8 +231,8 @@ def evaluate_joint(joint_name: str, settings: InspectionSettings,
                    exclude_cross_indices: Sequence[int] = ()) -> JointResult:
     index = JOINT_NAMES.index(joint_name)
     if target_range is None:
-        target_low = baseline[index] - settings.amplitude_rad
-        target_high = baseline[index] + settings.amplitude_rad
+        target_low = float(np.min(commands[:, index]))
+        target_high = float(np.max(commands[:, index]))
     else:
         target_low, target_high = target_range
     motion_deg = np.rad2deg(positions[:, index] - baseline[index])

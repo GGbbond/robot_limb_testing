@@ -3,11 +3,10 @@ import pytest
 
 from bxi_example_py_elf3.limb_inspection_core import (
     JOINT_NAMES, InspectionSettings, evaluate_joint, minimum_jerk,
-    selected_joint_groups, selected_joints, validate_center,
+    selected_joint_groups, selected_joints,
 )
 from bxi_example_py_elf3.limb_inspection_posture import (
     compact_posture, mirrored_target_ranges, safe_range_waypoints,
-    small_motion_waypoints,
 )
 
 
@@ -31,15 +30,8 @@ def test_minimum_jerk_endpoints():
     assert 0.49 < minimum_jerk(0.5) < 0.51
 
 
-def test_center_near_limit_is_rejected():
-    center = np.zeros(len(JOINT_NAMES))
-    center[JOINT_NAMES.index("l_ankle_x_joint")] = 0.34
-    with pytest.raises(ValueError):
-        validate_center(("l_ankle_x_joint",), center, np.deg2rad(5.0))
-
-
 def test_evaluation_pass_and_fail():
-    settings = InspectionSettings(amplitude_deg=5.0, max_velocity_deg_s=100.0)
+    settings = InspectionSettings(max_velocity_deg_s=100.0)
     count = 40
     baseline = np.zeros(len(JOINT_NAMES))
     index = JOINT_NAMES.index("l_elbow_y_joint")
@@ -62,8 +54,7 @@ def test_evaluation_pass_and_fail():
 
 def test_simulation_and_hardware_accept_large_finite_parameters_equally():
     settings = InspectionSettings(
-        amplitude_deg=1.0e8, move_sec=1.0e8, hold_sec=1.0e8,
-        cycles=1_000_000, collision_margin_deg=1.0e8,
+        move_sec=1.0e8, hold_sec=1.0e8, collision_margin_deg=1.0e8,
         mechanical_margin_deg=1.0e8, range_speed_deg_s=1.0e8,
         tracking_tolerance_deg=1.0e8, minimum_motion_ratio=1.0e8,
         cross_axis_limit_deg=1.0e8, max_velocity_deg_s=1.0e8,
@@ -74,7 +65,7 @@ def test_simulation_and_hardware_accept_large_finite_parameters_equally():
 
 def test_small_positive_and_zero_margin_values_have_no_business_minimum():
     settings = InspectionSettings(
-        amplitude_deg=0.001, move_sec=0.001, hold_sec=0.0,
+        move_sec=0.001, hold_sec=0.0,
         collision_margin_deg=0.0, mechanical_margin_deg=0.0,
         range_speed_deg_s=0.001, tracking_tolerance_deg=0.001,
         minimum_motion_ratio=0.0, cross_axis_limit_deg=0.001,
@@ -85,7 +76,6 @@ def test_small_positive_and_zero_margin_values_have_no_business_minimum():
 
 def test_invalid_lower_bounds_are_still_rejected():
     for field, value in (
-            ("amplitude_deg", 0.0),
             ("move_sec", 0.0),
             ("range_speed_deg_s", 0.0),
             ("tracking_tolerance_deg", 0.0),
@@ -100,16 +90,13 @@ def test_default_settings_are_shared_conservative_values():
     settings = InspectionSettings()
     settings.validate()
     assert settings.side == "left"
-    assert settings.motion_mode == "small_motion"
-    assert settings.amplitude_deg == 3.0
     assert settings.move_sec == 2.0
     assert settings.range_speed_deg_s == 10.0
 
 
 def test_simultaneous_peer_is_not_counted_as_cross_axis_motion():
     settings = InspectionSettings(
-        amplitude_deg=5.0, max_velocity_deg_s=100.0,
-        cross_axis_limit_deg=1.0)
+        max_velocity_deg_s=100.0, cross_axis_limit_deg=1.0)
     count = 40
     baseline = np.zeros(len(JOINT_NAMES))
     left = JOINT_NAMES.index("l_ankle_y_joint")
@@ -147,19 +134,3 @@ def test_compact_postures_and_mirrored_waypoints():
         ("l_hip_x_joint", "r_hip_x_joint"), mirrored)
     assert np.isclose(waypoints[0]["l_hip_x_joint"],
                       -waypoints[0]["r_hip_x_joint"])
-    small = small_motion_waypoints(
-        ("l_ankle_x_joint", "r_ankle_x_joint"),
-        {"l_ankle_x_joint": 0.0, "r_ankle_x_joint": 0.0},
-        np.deg2rad(5.0), 1)
-    assert np.isclose(small[0]["l_ankle_x_joint"],
-                      -small[0]["r_ankle_x_joint"])
-    compact_small_ranges = mirrored_target_ranges(
-        (("l_hip_x_joint", "r_hip_x_joint"),), {
-            "l_hip_x_joint": (np.deg2rad(-5.0), np.deg2rad(5.0)),
-            "r_hip_x_joint": (np.deg2rad(-5.0), np.deg2rad(5.0)),
-        }, 5.0)
-    compact_small = small_motion_waypoints(
-        ("l_hip_x_joint", "r_hip_x_joint"),
-        {"l_hip_x_joint": 0.0, "r_hip_x_joint": 0.0},
-        np.deg2rad(5.0), 1, compact_small_ranges)
-    assert np.isclose(np.rad2deg(compact_small[2]["l_hip_x_joint"]), -3.0)

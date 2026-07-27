@@ -67,7 +67,12 @@ def test_hardware_and_simulation_share_configuration(tmp_path, monkeypatch):
     legacy_hardware = tmp_path / "settings_hardware.json"
     defaults.write_text(json.dumps({"max_velocity_deg_s": 30.0}),
                         encoding="utf-8")
-    shared.write_text(json.dumps({"max_velocity_deg_s": 40.0}),
+    shared.write_text(json.dumps({
+        "max_velocity_deg_s": 40.0,
+        "motion_mode": "small_motion",
+        "amplitude_deg": 3.0,
+        "cycles": 2,
+    }),
                       encoding="utf-8")
     legacy_hardware.write_text(json.dumps({"max_velocity_deg_s": 20.0}),
                                encoding="utf-8")
@@ -77,7 +82,9 @@ def test_hardware_and_simulation_share_configuration(tmp_path, monkeypatch):
     monkeypatch.setattr(
         config, "LEGACY_HARDWARE_USER_SETTINGS", legacy_hardware)
 
-    assert config.load_settings()["max_velocity_deg_s"] == 40.0
+    loaded = config.load_settings()
+    assert loaded["max_velocity_deg_s"] == 40.0
+    assert not {"motion_mode", "amplitude_deg", "cycles"} & loaded.keys()
     config.save_settings({"max_velocity_deg_s": 50.0})
     assert json.loads(shared.read_text(encoding="utf-8"))[
         "max_velocity_deg_s"] == 50.0

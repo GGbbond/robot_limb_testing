@@ -34,10 +34,8 @@ def main():
     thread = Thread(target=executor.spin, daemon=True)
     thread.start()
     settings = InspectionSettings(
-        limb="leg", side="both_simultaneous", motion_mode="small_motion",
-        amplitude_deg=1.0,
-        move_sec=0.2, hold_sec=0.05, cycles=1,
-        range_speed_deg_s=30.0,
+        limb="leg", side="both_simultaneous",
+        move_sec=0.2, hold_sec=0.05, range_speed_deg_s=300.0,
         tracking_tolerance_deg=30.0, minimum_motion_ratio=0.05,
         cross_axis_limit_deg=30.0, max_velocity_deg_s=500.0,
         max_effort_nm=1000.0,
