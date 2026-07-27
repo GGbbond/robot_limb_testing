@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, EmitEvent, OpaqueFunction, RegisterEventHandler
@@ -13,6 +14,24 @@ def _require_root(_context):
     if os.geteuid() != 0:
         raise RuntimeError("Elf3 实机检测必须以 root 运行")
     return []
+
+
+def _handle_hardware_exit(event, _context):
+    """Tell the outer launcher when the driver itself exits unexpectedly."""
+    returncode = int(event.returncode)
+    # When the UI closes or requests a mode switch, launch enters shutdown
+    # before terminating the hardware process.  A driver that exits first is
+    # unexpected regardless of whether it returns 0, nonzero, or a signal.
+    if not _context.is_shutdown:
+        marker = os.environ.get("BXI_LIMB_HARDWARE_FAILURE_FILE", "")
+        if marker:
+            try:
+                Path(marker).write_text(
+                    "hardware_elf3 returncode=%d\n" % returncode,
+                    encoding="utf-8")
+            except OSError:
+                pass
+    return [EmitEvent(event=Shutdown(reason="实机驱动已退出"))]
 
 
 def generate_launch_description():
@@ -52,7 +71,7 @@ def generate_launch_description():
         DeclareLaunchArgument("max_command_gap_sec", default_value="0.08"),
         RegisterEventHandler(OnProcessExit(
             target_action=hardware,
-            on_exit=[EmitEvent(event=Shutdown(reason="实机驱动已退出"))])),
+            on_exit=_handle_hardware_exit)),
         RegisterEventHandler(OnProcessExit(
             target_action=application,
             on_exit=[EmitEvent(event=Shutdown(reason="四肢检测软件已退出"))])),

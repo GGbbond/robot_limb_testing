@@ -60,6 +60,8 @@ PKEXEC_EXECUTABLE="${BXI_PKEXEC_EXECUTABLE:-$(command -v pkexec || true)}"
 XEPHYR_EXECUTABLE="${BXI_XEPHYR_EXECUTABLE:-$(command -v Xephyr || true)}"
 SWITCH_DIR="$(mktemp -d /tmp/bxi_limb_mode_switch.XXXXXX)"
 SWITCH_FILE="$SWITCH_DIR/request"
+HARDWARE_FAILURE_FILE="$SWITCH_DIR/hardware_failure"
+pending_warning=""
 
 cleanup_mode_switch() {
     rm -rf "$SWITCH_DIR"
@@ -71,8 +73,11 @@ while true; do
     # this file without changing ownership, so the user supervisor can always
     # read the requested next mode after sudo exits.
     : > "$SWITCH_FILE"
+    rm -f "$HARDWARE_FAILURE_FILE"
     export BXI_LIMB_MODE_SWITCH_FILE="$SWITCH_FILE"
-    startup_warning=""
+    export BXI_LIMB_HARDWARE_FAILURE_FILE="$HARDWARE_FAILURE_FILE"
+    startup_warning="$pending_warning"
+    pending_warning=""
     if [ "$MODE" = "hardware" ] && ! python3 -c \
             'from bxi_example_py_elf3.limb_hardware_preflight import fpga_canfd_available; raise SystemExit(0 if fpga_canfd_available() else 1)'; then
         startup_warning="未检测到 Xilinx PCI CAN-FD 设备 10ee:7022，已保持软件运行并回退到 MuJoCo 仿真模式。请关闭机器人动力，检查 FPGA 板卡、PCIe 插槽和主控连接后重试。"
@@ -96,6 +101,7 @@ while true; do
             "$SUDO_EXECUTABLE" -E env \
                 BXI_LIMB_CONFIG_DIR="$CONFIG_DIR" \
                 BXI_LIMB_MODE_SWITCH_FILE="$SWITCH_FILE" \
+                BXI_LIMB_HARDWARE_FAILURE_FILE="$HARDWARE_FAILURE_FILE" \
                 ROS_LOCALHOST_ONLY=1 \
                 "$0" --hardware-child
             status=$?
@@ -110,6 +116,7 @@ while true; do
                 MUJOCO_GL=egl \
                 BXI_LIMB_CONFIG_DIR="$CONFIG_DIR" \
                 BXI_LIMB_MODE_SWITCH_FILE="$SWITCH_FILE" \
+                BXI_LIMB_HARDWARE_FAILURE_FILE="$HARDWARE_FAILURE_FILE" \
                 BXI_GAMEPAD_DEVICE="${BXI_GAMEPAD_DEVICE:-/dev/input/js0}" \
                 BXI_VIEW_RENDER_THREADS="${BXI_VIEW_RENDER_THREADS:-2}" \
                 ROS_LOCALHOST_ONLY=1 \
@@ -131,14 +138,24 @@ while true; do
     fi
     set -e
 
-    if [ ! -s "$SWITCH_FILE" ]; then
-        exit "$status"
+    if [ -s "$SWITCH_FILE" ]; then
+        read -r requested_mode < "$SWITCH_FILE"
+        if [ "$requested_mode" != "simulation" ] && \
+                [ "$requested_mode" != "hardware" ]; then
+            echo "忽略无效的模式切换请求：$requested_mode" >&2
+            exit 2
+        fi
+        MODE="$requested_mode"
+        continue
     fi
-    read -r requested_mode < "$SWITCH_FILE"
-    if [ "$requested_mode" != "simulation" ] && \
-            [ "$requested_mode" != "hardware" ]; then
-        echo "忽略无效的模式切换请求：$requested_mode" >&2
-        exit 2
+
+    if [ "$MODE" = "hardware" ] && [ -s "$HARDWARE_FAILURE_FILE" ]; then
+        failure_detail="$(head -n 1 "$HARDWARE_FAILURE_FILE")"
+        pending_warning="实机驱动异常退出（${failure_detail}），常见原因是所需电机未接全、CAN 口连接错误或驱动初始化失败。已停止实机控制并自动回退到 MuJoCo 仿真，软件保持运行。请断开动力后检查所测手臂/腿对应电机和 CAN 口。"
+        echo "$pending_warning" >&2
+        MODE="simulation"
+        continue
     fi
-    MODE="$requested_mode"
+
+    exit "$status"
 done
