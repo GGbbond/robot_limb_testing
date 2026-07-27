@@ -60,7 +60,7 @@ def test_evaluation_pass_and_fail():
     assert "运动不足" in result.reason
 
 
-def test_simulation_and_hardware_reject_unbounded_parameters_equally():
+def test_simulation_and_hardware_accept_large_finite_parameters_equally():
     settings = InspectionSettings(
         amplitude_deg=1.0e8, move_sec=1.0e8, hold_sec=1.0e8,
         cycles=1_000_000, collision_margin_deg=1.0e8,
@@ -69,16 +69,28 @@ def test_simulation_and_hardware_reject_unbounded_parameters_equally():
         cross_axis_limit_deg=1.0e8, max_velocity_deg_s=1.0e8,
         max_effort_nm=1.0e8,
     )
-    with pytest.raises(ValueError):
-        settings.validate()
+    settings.validate()
 
 
-def test_hardware_thresholds_cannot_disable_safety_guards():
+def test_small_positive_and_zero_margin_values_have_no_business_minimum():
+    settings = InspectionSettings(
+        amplitude_deg=0.001, move_sec=0.001, hold_sec=0.0,
+        collision_margin_deg=0.0, mechanical_margin_deg=0.0,
+        range_speed_deg_s=0.001, tracking_tolerance_deg=0.001,
+        minimum_motion_ratio=0.0, cross_axis_limit_deg=0.001,
+        max_velocity_deg_s=0.001, max_effort_nm=0.001,
+    )
+    settings.validate()
+
+
+def test_invalid_lower_bounds_are_still_rejected():
     for field, value in (
-            ("tracking_tolerance_deg", 30.1),
-            ("cross_axis_limit_deg", 30.1),
-            ("max_velocity_deg_s", 500.1),
-            ("max_effort_nm", 1000.1)):
+            ("amplitude_deg", 0.0),
+            ("move_sec", 0.0),
+            ("range_speed_deg_s", 0.0),
+            ("tracking_tolerance_deg", 0.0),
+            ("max_velocity_deg_s", 0.0),
+            ("max_effort_nm", 0.0)):
         settings = InspectionSettings(**{field: value})
         with pytest.raises(ValueError):
             settings.validate()

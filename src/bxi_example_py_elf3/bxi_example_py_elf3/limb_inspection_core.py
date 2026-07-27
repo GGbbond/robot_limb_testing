@@ -152,32 +152,25 @@ class InspectionSettings:
         )
         if not all(np.isfinite(value) for value in numeric_values):
             raise ValueError("检测参数必须是有限数值")
-        if not 0.1 <= self.amplitude_deg <= 20.0:
-            raise ValueError("测试幅度必须在 0.1° 到 20° 之间")
-        if not 0.2 <= self.move_sec <= 20.0:
-            raise ValueError("单程时间必须在 0.2s 到 20s 之间")
-        if not 0.0 <= self.hold_sec <= 10.0:
-            raise ValueError("保持时间必须在 0s 到 10s 之间")
-        if not 1 <= self.cycles <= 10:
-            raise ValueError("循环次数必须在 1 到 10 之间")
-        if not 5.0 <= self.collision_margin_deg <= 20.0:
-            raise ValueError("安全全行程的碰撞余量必须在 5° 到 20° 之间")
-        if not 0.5 <= self.mechanical_margin_deg <= 20.0:
-            raise ValueError("机械限位余量必须在 0.5° 到 20° 之间")
-        if not 1.0 <= self.range_speed_deg_s <= 30.0:
-            raise ValueError("全行程速度必须在 1°/s 到 30°/s 之间")
-        if not 0.05 <= self.minimum_motion_ratio <= 1.2:
-            raise ValueError("最小响应比例必须在 0.05 到 1.2 之间")
-        bounded_thresholds = (
-            ("最大跟踪误差", self.tracking_tolerance_deg, 0.1, 30.0),
-            ("最大关节串扰", self.cross_axis_limit_deg, 0.1, 30.0),
-            ("最大速度", self.max_velocity_deg_s, 1.0, 500.0),
-            ("最大力矩", self.max_effort_nm, 0.1, 1000.0),
-        )
-        for label, value, low, high in bounded_thresholds:
-            if not low <= value <= high:
-                raise ValueError(
-                    "%s必须在 %g 到 %g 之间" % (label, low, high))
+        if self.amplitude_deg <= 0.0:
+            raise ValueError("测试幅度必须大于 0°")
+        if self.move_sec <= 0.0:
+            raise ValueError("单程时间必须大于 0s")
+        if self.hold_sec < 0.0:
+            raise ValueError("保持时间不能小于 0s")
+        if self.cycles < 1:
+            raise ValueError("循环次数必须大于或等于 1")
+        if self.collision_margin_deg < 0.0:
+            raise ValueError("碰撞余量不能小于 0°")
+        if self.mechanical_margin_deg < 0.0:
+            raise ValueError("机械限位余量不能小于 0°")
+        if self.range_speed_deg_s <= 0.0:
+            raise ValueError("全行程速度必须大于 0°/s")
+        if min(self.tracking_tolerance_deg, self.cross_axis_limit_deg,
+               self.max_velocity_deg_s, self.max_effort_nm) <= 0.0:
+            raise ValueError("判定阈值必须大于 0")
+        if self.minimum_motion_ratio < 0.0:
+            raise ValueError("最小响应比例不能小于 0")
 
     @property
     def amplitude_rad(self) -> float:

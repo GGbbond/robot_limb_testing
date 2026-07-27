@@ -30,7 +30,8 @@ from rclpy.utilities import remove_ros_args
 
 from .limb_inspection_controller import LimbInspectionController
 from .limb_inspection_config import (
-    DEFAULT_REPORT_DIRECTORY, load_settings, save_settings,
+    DEFAULT_REPORT_DIRECTORY, PARAMETER_CYCLES_MAX, PARAMETER_CYCLES_MIN,
+    PARAMETER_INPUT_MAX, load_settings, save_settings,
 )
 from .limb_inspection_core import (
     JOINT_LABELS, JOINT_NAMES, InspectionSettings, selected_joints,
@@ -199,24 +200,25 @@ class LimbInspectionWindow(QMainWindow):
         self._select_data(
             self.motion_mode, self.settings_data.get("motion_mode", "small_motion"))
         self.amplitude = self._double(
-            0.1, 20.0,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "amplitude_deg", 3.0, " °")
         self.move_sec = self._double(
-            0.2, 20.0,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "move_sec", 2.0, " s")
         self.hold_sec = self._double(
-            0.0, 10.0, "hold_sec", 0.5, " s")
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
+            "hold_sec", 0.5, " s")
         self.range_speed = self._double(
-            1.0, 30.0,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "range_speed_deg_s", 10.0, " °/s")
         self.collision_margin = self._double(
-            5.0, 20.0,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "collision_margin_deg", 5.0, " °")
         self.mechanical_margin = self._double(
-            0.5, 20.0,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "mechanical_margin_deg", 2.0, " °")
         self.cycles = QSpinBox()
-        self.cycles.setRange(1, 10)
+        self.cycles.setRange(PARAMETER_CYCLES_MIN, PARAMETER_CYCLES_MAX)
         self.cycles.setValue(int(self.settings_data.get("cycles", 1)))
         motion.addRow("检测模式", self.motion_mode)
         motion.addRow("单向幅度", self.amplitude)
@@ -233,19 +235,19 @@ class LimbInspectionWindow(QMainWindow):
         self.limits_group = QGroupBox("合格判定")
         limits = QFormLayout(self.limits_group)
         self.tracking = self._double(
-            0.1, 30.0,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "tracking_tolerance_deg", 2.0, " °")
         self.response = self._double(
-            0.05, 1.2,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "minimum_motion_ratio", 0.6, "")
         self.cross = self._double(
-            0.1, 30.0,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "cross_axis_limit_deg", 3.0, " °")
         self.max_velocity = self._double(
-            1.0, 500.0,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "max_velocity_deg_s", 30.0, " °/s")
         self.max_effort = self._double(
-            0.1, 1000.0,
+            -PARAMETER_INPUT_MAX, PARAMETER_INPUT_MAX,
             "max_effort_nm", 80.0, " Nm")
         limits.addRow("最大跟踪误差", self.tracking)
         limits.addRow("最小运动比例", self.response)
