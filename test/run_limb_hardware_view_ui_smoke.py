@@ -46,6 +46,26 @@ def main():
     if window.gamepad_enabled or len(warnings) != 2:
         raise RuntimeError("设备缺失时应提示并保持软件运行")
 
+    class FakeWheelEvent:
+        def __init__(self):
+            self.ignored = False
+
+        def ignore(self):
+            self.ignored = True
+
+    numeric_parameters = (
+        window.move_sec, window.hold_sec, window.range_speed,
+        window.collision_margin, window.mechanical_margin,
+        window.tracking, window.response, window.cross,
+        window.max_velocity, window.max_effort,
+    )
+    for widget in numeric_parameters:
+        value_before = widget.value()
+        wheel_event = FakeWheelEvent()
+        widget.wheelEvent(wheel_event)
+        if not wheel_event.ignored or widget.value() != value_before:
+            raise RuntimeError("鼠标滚轮不应修改数值参数")
+
     class FakeGamepadReader:
         def __init__(self, device):
             self.device = device

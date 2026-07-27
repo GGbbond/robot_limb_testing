@@ -46,6 +46,15 @@ from .limb_simulation_view import SimulationViewport
 
 
 APP_TITLE = "BXI 机器人四肢检测台"
+
+
+class NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """Keep page scrolling from accidentally changing numeric parameters."""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 def _spin_executor(executor):
     """Stop quietly when ROS invalidates its context during SIGINT."""
     try:
@@ -438,7 +447,7 @@ class LimbInspectionWindow(QMainWindow):
                 QMessageBox.warning(self, "界面模式保存失败", str(exc))
 
     def _double(self, low, high, key, default, suffix):
-        widget = QDoubleSpinBox()
+        widget = NoWheelDoubleSpinBox()
         widget.setRange(low, high)
         widget.setDecimals(3)
         widget.setValue(float(self.settings_data.get(key, default)))
