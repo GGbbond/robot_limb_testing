@@ -32,6 +32,11 @@ from .limb_inspection_controller import LimbInspectionController
 from .limb_inspection_config import (
     DEFAULT_REPORT_DIRECTORY, PARAMETER_INPUT_MAX, load_settings, save_settings,
 )
+from .limb_gamepad import (
+    XBOX_BUTTON_ACTIONS, XBOX_DPAD_THRESHOLD, XBOX_DPAD_X_AXIS,
+    XboxGamepadReader,
+)
+from .limb_hardware_preflight import fpga_canfd_available
 from .limb_inspection_core import (
     JOINT_LABELS, JOINT_NAMES, InspectionSettings,
     selected_feedback_summary, selected_joints,
@@ -69,6 +74,12 @@ class LimbInspectionWindow(QMainWindow):
         self.result_recipe = tuple()
         self.initialized_recipe = tuple()
         self.external_shutdown = False
+        self.mode_switch_file = os.environ.get("BXI_LIMB_MODE_SWITCH_FILE", "")
+        self.startup_warning = os.environ.get("BXI_LIMB_STARTUP_WARNING", "")
+        self.gamepad_reader = None
+        self.gamepad_enabled = False
+        self.last_initialized_state = bool(
+            self.controller.snapshot()["initialized"])
         self.ui_mode = self.settings_data.get("ui_mode", "production")
         if self.ui_mode not in ("production", "debug"):
             self.ui_mode = "production"
@@ -83,10 +94,15 @@ class LimbInspectionWindow(QMainWindow):
         self.refresh_timer.timeout.connect(self._refresh)
         self.refresh_timer.start(100)
         self.simulation_timer = None
-        if not controller.hardware_mode:
+        if self.simulation_view is not None:
             self.simulation_timer = QTimer(self)
             self.simulation_timer.timeout.connect(self._refresh_simulation)
             self.simulation_timer.start(50)
+        self.gamepad_timer = QTimer(self)
+        self.gamepad_timer.timeout.connect(self._poll_gamepad)
+        self.gamepad_timer.start(100)
+        if self.startup_warning:
+            QTimer.singleShot(0, self._show_startup_warning)
 
     def _apply_theme(self):
         self.setStyleSheet("""
@@ -167,12 +183,39 @@ class LimbInspectionWindow(QMainWindow):
         self.detail_label.setWordWrap(True)
         self.detail_label.setProperty("role", "muted")
         status_layout.addWidget(self.detail_label, 4, 0, 1, 2)
-        self.simulation_debug_label = None
-        if not self.controller.hardware_mode:
-            self.simulation_debug_label = QLabel("仿真与实机使用相同参数和安全阈值")
-            self.simulation_debug_label.setProperty("role", "muted")
-            status_layout.addWidget(self.simulation_debug_label, 5, 0, 1, 2)
+        self.simulation_debug_label = QLabel(
+            "实机反馈驱动只读数字孪生视图"
+            if self.controller.hardware_mode else
+            "仿真与实机使用相同参数和安全阈值")
+        self.simulation_debug_label.setProperty("role", "muted")
+        status_layout.addWidget(self.simulation_debug_label, 5, 0, 1, 2)
         layout.addWidget(self.status_group)
+
+        self.debug_tools_group = QGroupBox("调试工具")
+        debug_tools = QGridLayout(self.debug_tools_group)
+        self.mode_switch_button = QPushButton(
+            "切换到 MuJoCo 仿真" if self.controller.hardware_mode
+            else "切换到实机模式")
+        self.mode_switch_button.clicked.connect(self._request_mode_switch)
+        if not self.mode_switch_file:
+            self.mode_switch_button.setEnabled(False)
+            self.mode_switch_button.setToolTip(
+                "请通过 scripts/run_limb_inspection.sh 启动后使用模式切换")
+        self.gamepad_button = QPushButton("启用 Xbox 手柄")
+        self.gamepad_button.clicked.connect(self._toggle_gamepad)
+        self.gamepad_status_label = QLabel("关闭")
+        self.gamepad_status_label.setWordWrap(True)
+        self.gamepad_status_label.setProperty("role", "muted")
+        self.gamepad_help_label = QLabel(
+            "按键：A 初始化｜X 开始检测｜B 平稳停止｜Y 紧急停止\n"
+            "方向键：← 选择手臂｜→ 选择腿（初始化、检测、回中时锁定）")
+        self.gamepad_help_label.setWordWrap(True)
+        self.gamepad_help_label.setProperty("role", "muted")
+        debug_tools.addWidget(self.mode_switch_button, 0, 0)
+        debug_tools.addWidget(self.gamepad_button, 0, 1)
+        debug_tools.addWidget(self.gamepad_status_label, 1, 0, 1, 2)
+        debug_tools.addWidget(self.gamepad_help_label, 2, 0, 1, 2)
+        layout.addWidget(self.debug_tools_group)
 
         self.object_group = QGroupBox("检测对象")
         form = QFormLayout(self.object_group)
@@ -293,22 +336,15 @@ class LimbInspectionWindow(QMainWindow):
         self.plot.addLegend()
         self.top_splitter = QSplitter(Qt.Horizontal)
         self.top_splitter.addWidget(self.plot)
-        if not self.controller.hardware_mode:
-            self.visual_group = QGroupBox(
-                "MuJoCo 实时仿真｜左键旋转  右键平移  滚轮缩放  双击复位")
-            simulation_layout = QVBoxLayout(self.visual_group)
-            self.simulation_view = SimulationViewport(
-                self.controller.simulation_bench_height_m)
-            simulation_layout.addWidget(self.simulation_view)
-        else:
-            self.visual_group = QGroupBox("实时状态视图")
-            visual_layout = QVBoxLayout(self.visual_group)
-            hardware_notice = QLabel(
-                "当前为实机检测模式\nMuJoCo 画面仅在仿真模式中显示")
-            hardware_notice.setAlignment(Qt.AlignCenter)
-            hardware_notice.setProperty("role", "muted")
-            hardware_notice.setStyleSheet("font-size:16pt;")
-            visual_layout.addWidget(hardware_notice)
+        view_title = (
+            "MuJoCo 实机同步视图（只读）"
+            if self.controller.hardware_mode else "MuJoCo 实时仿真")
+        self.visual_group = QGroupBox(
+            view_title + "｜左键旋转  右键平移  滚轮缩放  双击复位")
+        simulation_layout = QVBoxLayout(self.visual_group)
+        self.simulation_view = SimulationViewport(
+            self.controller.simulation_bench_height_m)
+        simulation_layout.addWidget(self.simulation_view)
         self.top_splitter.addWidget(self.visual_group)
         self.top_splitter.setSizes([520, 520])
         layout.addWidget(self.top_splitter, 3)
@@ -372,6 +408,8 @@ class LimbInspectionWindow(QMainWindow):
         """Switch presentation only; controller and safety behavior stay unchanged."""
         self.ui_mode = "debug" if mode == "debug" else "production"
         production = self.ui_mode == "production"
+        if production and self.gamepad_enabled:
+            self._disable_gamepad()
         self.ui_mode_label.setText("生产模式" if production else "调试模式")
         self.ui_mode_label.setStyleSheet(
             "color:#47d18c;" if production else "color:#75a3ff;")
@@ -379,8 +417,8 @@ class LimbInspectionWindow(QMainWindow):
             "进入调试模式" if production else "进入生产模式")
         self.motion_group.setVisible(not production)
         self.limits_group.setVisible(not production)
-        if self.simulation_debug_label is not None:
-            self.simulation_debug_label.setVisible(not production)
+        self.simulation_debug_label.setVisible(not production)
+        self.debug_tools_group.setVisible(not production)
         self.export_button.setVisible(not production)
         self.plot.setVisible(not production)
         self.production_result_group.setVisible(production)
@@ -452,14 +490,10 @@ class LimbInspectionWindow(QMainWindow):
             settings = self._settings()
             if not self.safety_check.isChecked():
                 raise RuntimeError("请先完成并勾选台架安全确认")
-            text = ("初始化步骤会使所选关节进入位置控制。\n\n"
-                    "确认机械限位、固定夹具和急停均已检查？")
-            if QMessageBox.question(self, "确认初始化", text,
-                                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
-                return
             self._save_settings()
             self.controller.request_initialize(settings)
             self.initialized_recipe = selected_joints(settings.limb, settings.side)
+            self.last_initialized_state = False
         except Exception as exc:
             QMessageBox.critical(self, "无法初始化", str(exc))
 
@@ -470,14 +504,6 @@ class LimbInspectionWindow(QMainWindow):
             settings = self._settings()
             if not self.full_range_check.isChecked():
                 raise RuntimeError("请确认线缆、夹具和全行程范围无干涉")
-            text = (
-                "安全全行程会让每个关节依次接近模型无碰撞边界，"
-                "单个大角度关节可能运动数十秒。\n\n"
-                "确认人员已离开、急停可用并继续？")
-            if QMessageBox.question(
-                    self, "确认安全全行程", text,
-                    QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
-                return
             self._save_settings()
             self.plot_time.clear()
             self.plot_command.clear()
@@ -494,8 +520,151 @@ class LimbInspectionWindow(QMainWindow):
             self, "急停已锁定",
             "控制器已停止发送命令。请切断动力、排查机械和电气状态；本次软件必须重启后才能再次初始化。")
 
+    def _request_mode_switch(self):
+        if not self.mode_switch_file:
+            QMessageBox.warning(
+                self, "无法切换模式",
+                "当前不是通过统一启动脚本运行，请关闭后使用 "
+                "scripts/run_limb_inspection.sh 启动。")
+            return
+        target = "simulation" if self.controller.hardware_mode else "hardware"
+        if target == "hardware" and not fpga_canfd_available():
+            QMessageBox.warning(
+                self, "FPGA 未连接",
+                "未检测到 Xilinx PCI CAN-FD 设备 10ee:7022，"
+                "已保持当前仿真模式，软件不会退出。\n\n"
+                "请关闭机器人动力，检查 FPGA 板卡、PCIe 插槽和主控连接后重试。")
+            return
+        warning = (
+            "将停止当前程序并切换到实机模式。\n"
+            "实机驱动启动时会设置 motor_pwr=True，请确认机器人已固定、"
+            "运动区无人且物理急停可用。"
+            if target == "hardware" else
+            "将停止实机驱动并切换到 MuJoCo 仿真模式。")
+        if QMessageBox.question(
+                self, "确认切换运行环境", warning,
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            self._save_settings()
+            Path(self.mode_switch_file).write_text(
+                target + "\n", encoding="ascii")
+        except Exception as exc:
+            QMessageBox.critical(self, "模式切换失败", str(exc))
+            return
+        snap = self.controller.snapshot()
+        if snap["initialized"] or snap["test_running"] or snap["returning"]:
+            self.controller.emergency_stop("正在切换运行环境")
+        self.external_shutdown = True
+        self.close()
+
+    def _toggle_gamepad(self):
+        if self.gamepad_enabled:
+            self._disable_gamepad()
+            return
+        device = os.environ.get("BXI_GAMEPAD_DEVICE", "/dev/input/js0")
+        if not os.path.exists(device):
+            QMessageBox.warning(
+                self, "手柄未连接",
+                "没有找到手柄设备 %s，手柄功能未启用，软件继续运行。\n\n"
+                "请连接手柄后重试；可用 jstest %s 核对设备。" %
+                (device, device))
+            return
+        if not os.access(device, os.R_OK):
+            QMessageBox.warning(
+                self, "无法读取手柄",
+                "当前用户没有读取 %s 的权限，手柄功能未启用，"
+                "软件继续运行。" % device)
+            return
+        self.gamepad_reader = XboxGamepadReader(device)
+        self.gamepad_reader.start()
+        self.gamepad_enabled = True
+        self.safety_check.setChecked(True)
+        self.full_range_check.setChecked(True)
+        self.gamepad_button.setText("关闭 Xbox 手柄")
+        self.gamepad_status_label.setText(
+            "正在连接 %s…｜已自动确认台架与全行程检查" % device)
+
+    def _disable_gamepad(self):
+        if self.gamepad_reader is not None:
+            self.gamepad_reader.stop()
+        self.gamepad_reader = None
+        self.gamepad_enabled = False
+        self.safety_check.setChecked(False)
+        self.full_range_check.setChecked(False)
+        self.gamepad_button.setText("启用 Xbox 手柄")
+        self.gamepad_status_label.setStyleSheet("")
+        self.gamepad_status_label.setText("关闭")
+
+    def _select_limb_from_gamepad(self, limb):
+        snap = self.controller.snapshot()
+        if (snap["test_running"] or snap["returning"] or
+                bool(self.controller.reset_step)):
+            self.gamepad_status_label.setText(
+                "初始化、检测或回中进行中，暂不能切换手臂/腿")
+            return
+        index = self.limb_combo.findData(limb)
+        if index >= 0:
+            self.limb_combo.setCurrentIndex(index)
+            name = "手臂" if limb == "arm" else "腿"
+            self.gamepad_status_label.setText("已选择%s测试" % name)
+
+    def _poll_gamepad(self):
+        if self.gamepad_reader is None:
+            return
+        for event in self.gamepad_reader.drain_events():
+            if event[0] == "status":
+                if event[1]:
+                    self.gamepad_status_label.setText(
+                        "已连接 %s" % event[2])
+                    self.gamepad_status_label.setStyleSheet("color:#47d18c;")
+                else:
+                    self.gamepad_status_label.setText(
+                        "等待手柄：%s" % event[2])
+                    self.gamepad_status_label.setStyleSheet("color:#ffcc66;")
+                    QMessageBox.warning(
+                        self, "手柄连接中断",
+                        "手柄无法读取或已断开：%s\n\n"
+                        "手柄功能已关闭，软件继续运行。" % event[2])
+                    self._disable_gamepad()
+                    break
+                continue
+            if event[0] == "rumble":
+                self.gamepad_status_label.setText(
+                    "初始化完成，手柄已振动提醒｜X 开始检测")
+                self.gamepad_status_label.setStyleSheet("color:#47d18c;")
+                continue
+            _kind, number, pressed = event
+            if _kind == "axis":
+                if number == XBOX_DPAD_X_AXIS:
+                    if pressed <= -XBOX_DPAD_THRESHOLD:
+                        self._select_limb_from_gamepad("arm")
+                    elif pressed >= XBOX_DPAD_THRESHOLD:
+                        self._select_limb_from_gamepad("leg")
+                continue
+            if not pressed:
+                continue
+            action = XBOX_BUTTON_ACTIONS.get(number)
+            if action == "initialize" and self.init_button.isEnabled():
+                self.init_button.click()
+            elif action == "start" and self.start_button.isEnabled():
+                self.start_button.click()
+            elif action == "stop" and self.stop_button.isEnabled():
+                self.stop_button.click()
+            elif action == "emergency_stop":
+                self.estop_button.click()
+
+    def _show_startup_warning(self):
+        QMessageBox.warning(self, "设备预检未通过", self.startup_warning)
+
     def _refresh(self):
         snap = self.controller.snapshot()
+        initialized_now = bool(snap["initialized"])
+        if (self.gamepad_enabled and initialized_now and
+                not self.last_initialized_state and
+                self.gamepad_reader is not None):
+            self.gamepad_reader.rumble(300)
+        self.last_initialized_state = initialized_now
         self.state_label.setText(snap["state"])
         self.detail_label.setText(snap["detail"])
         current_names = tuple(snap.get("current_joints") or ())
@@ -750,6 +919,8 @@ class LimbInspectionWindow(QMainWindow):
             self.simulation_timer.stop()
         if self.simulation_view is not None:
             self.simulation_view.shutdown()
+        self._disable_gamepad()
+        self.gamepad_timer.stop()
         self.refresh_timer.stop()
         event.accept()
 
