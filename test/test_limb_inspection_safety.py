@@ -41,6 +41,7 @@ def bare_controller():
     controller.detail = ""
     controller.progress = 0.0
     controller.command_topic = "hardware/actuators_cmds"
+    controller.feedback_topic = "hardware/joint_states"
     controller.last_publish_at = time.monotonic()
     controller.max_command_gap_sec = 0.08
     controller.last_publisher_check_at = time.monotonic()
@@ -120,9 +121,19 @@ def test_command_gap_is_latched_during_hardware_stiffness_ramp():
 def test_second_command_publisher_is_latched_while_active():
     controller = bare_controller()
     controller.last_publisher_check_at = 0.0
-    controller.count_publishers = lambda _topic: 2
+    controller.count_publishers = lambda topic: (
+        2 if topic == controller.command_topic else 1)
     controller._timer_callback()
     assert controller.faults == ["运行中检测到多个关节命令发布者"]
+
+
+def test_second_feedback_publisher_is_latched_while_active():
+    controller = bare_controller()
+    controller.last_publisher_check_at = 0.0
+    controller.count_publishers = lambda topic: (
+        2 if topic == controller.feedback_topic else 1)
+    controller._timer_callback()
+    assert controller.faults == ["运行中检测到多个关节反馈发布者"]
 
 
 def test_limits_are_monitored_during_initialized_hold():

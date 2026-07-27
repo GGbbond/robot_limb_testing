@@ -14,6 +14,63 @@ import time
 from ament_index_python.packages import get_package_prefix
 
 
+def _terminate_when_parent_exits(parent_pid):
+    """Ask Linux to terminate a spawned backend if this manager disappears."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    # PR_SET_PDEATHSIG = 1.  Do not leave an unmanaged simulator behind when
+    # ros2 launch, the terminal, or this Python manager is killed abruptly.
+    if libc.prctl(1, signal.SIGTERM) != 0:
+        os._exit(127)
+    # The parent may have exited between fork() and prctl().
+    if os.getppid() != parent_pid:
+        os.kill(os.getpid(), signal.SIGTERM)
+
+
+def _spawn_owned(command, **kwargs):
+    parent_pid = os.getpid()
+    return subprocess.Popen(
+        command, start_new_session=True,
+        preexec_fn=lambda: _terminate_when_parent_exits(parent_pid),
+        **kwargs)
+
+
+def _acquire_instance_lock():
+    runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+    path = runtime_dir / ("bxi_limb_hidden_simulation_%d.lock" % os.getuid())
+    stream = open(path, "a+", encoding="ascii")
+    try:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        stream.close()
+        raise RuntimeError("已经有一套 BXI 隐藏仿真正在运行，请先关闭旧实例")
+    return stream
+
+
+def _residual_vendor_simulations(vendor_path):
+    """Return vendor simulator PIDs left behind without their manager."""
+    residual = []
+    expected = str(Path(vendor_path).resolve())
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+            arguments = [part.decode(errors="replace")
+                         for part in raw.split(b"\0") if part]
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        if not arguments:
+            continue
+        try:
+            executable = str(Path(arguments[0]).resolve())
+        except OSError:
+            continue
+        if (executable == expected and
+                any("__node:=simulation_mujoco" in arg for arg in arguments)):
+            residual.append(int(entry.name))
+    return tuple(sorted(residual))
+
+
 class HiddenXDisplay:
     """Own an unmapped host window and a Xephyr server rendered into it."""
 
@@ -65,7 +122,7 @@ class HiddenXDisplay:
             "-screen", "%dx%d" % (self.width, self.height),
             "-noreset", "-nolisten", "tcp",
         ]
-        self.xephyr = subprocess.Popen(command, start_new_session=True)
+        self.xephyr = _spawn_owned(command)
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
             if self.xephyr.poll() is not None:
@@ -149,6 +206,15 @@ def main(args=None):
     if not model_path.is_file():
         parser.error("model file does not exist: %s" % model_path)
 
+    instance_lock = _acquire_instance_lock()
+    vendor_path = _vendor_simulation_path()
+    residual = _residual_vendor_simulations(vendor_path)
+    if residual:
+        instance_lock.close()
+        raise RuntimeError(
+            "检测到未退出的 MuJoCo 后台进程 PID %s，请先关闭残留实例" %
+            ", ".join(map(str, residual)))
+
     stopped = threading.Event()
 
     def request_stop(_signum, _frame):
@@ -170,13 +236,12 @@ def main(args=None):
             "BXI_VENDOR_RENDER_THREADS", "2")
         environment.setdefault("MESA_GLTHREAD", "false")
         command = [
-            str(_vendor_simulation_path()),
+            str(vendor_path),
             str(model_path),
             "--ros-args", "-r", "__node:=simulation_mujoco",
             "-p", "simulation/model_file:=%s" % model_path,
         ]
-        simulation = subprocess.Popen(
-            command, env=environment, start_new_session=True)
+        simulation = _spawn_owned(command, env=environment)
         while simulation.poll() is None and not stopped.wait(0.1):
             pass
         if stopped.is_set():
@@ -188,6 +253,7 @@ def main(args=None):
         HiddenXDisplay._stop_process(
             simulation, first_signal=signal.SIGINT)
         hidden_display.close()
+        instance_lock.close()
 
 
 if __name__ == "__main__":

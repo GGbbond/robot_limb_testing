@@ -81,10 +81,11 @@ class LimbInspectionController(Node):
             reliability=qos_profile_sensor_data.reliability,
         )
         self.command_topic = self.topic_prefix + "actuators_cmds"
+        self.feedback_topic = self.topic_prefix + "joint_states"
         self.publisher = self.create_publisher(
             bxi_msg.ActuatorCmds, self.command_topic, qos)
         self.subscription = self.create_subscription(
-            JointState, self.topic_prefix + "joint_states",
+            JointState, self.feedback_topic,
             self._joint_callback, qos)
         self.reset_client = self.create_client(
             bxi_srv.RobotReset, self.topic_prefix + "robot_reset")
@@ -255,7 +256,10 @@ class LimbInspectionController(Node):
                 if missing_effort:
                     raise RuntimeError(
                         "以下关节没有力矩反馈：" + ", ".join(missing_effort))
-            if self.hardware_mode and self.count_publishers(self.command_topic) > 1:
+            if self.count_publishers(self.feedback_topic) > 1:
+                raise RuntimeError(
+                    "检测到多个关节反馈发布者，请关闭残留仿真或硬件节点")
+            if self.count_publishers(self.command_topic) > 1:
                 raise RuntimeError("检测到多个关节命令发布者，请关闭其他控制器")
             self.initialized = False
             self.initialized_names = tuple()
@@ -473,7 +477,7 @@ class LimbInspectionController(Node):
         names = message.name if message.name else JOINT_NAMES[:len(message.position)]
         mapping = {name: i for i, name in enumerate(names)}
         with self.lock:
-            control_active = self.hardware_mode and self._control_active_locked()
+            control_active = self._control_active_locked()
             if control_active and len(mapping) != len(names):
                 self.emergency_stop("关节反馈包含重复名称")
                 return
@@ -563,7 +567,7 @@ class LimbInspectionController(Node):
                 return
             # Every phase that can energize hardware gets the same independent
             # feedback, publisher-count and scheduling-gap protection.
-            if self.hardware_mode and self._control_active_locked():
+            if self._control_active_locked():
                 if (self.last_publish_at > 0.0 and
                         now - self.last_publish_at > self.max_command_gap_sec):
                     self.emergency_stop("控制命令发布间隔超时")
@@ -573,6 +577,9 @@ class LimbInspectionController(Node):
                     return
                 if now - self.last_publisher_check_at >= 0.5:
                     self.last_publisher_check_at = now
+                    if self.count_publishers(self.feedback_topic) > 1:
+                        self.emergency_stop("运行中检测到多个关节反馈发布者")
+                        return
                     if self.count_publishers(self.command_topic) > 1:
                         self.emergency_stop("运行中检测到多个关节命令发布者")
                         return
