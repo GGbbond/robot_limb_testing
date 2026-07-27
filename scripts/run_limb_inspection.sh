@@ -11,7 +11,10 @@ fi
 
 if [ "$MODE" = "hardware" ] && [ "$(id -u)" -ne 0 ]; then
     echo "实机驱动需要管理员权限，即将请求 sudo 授权。"
-    exec sudo -E "$0" hardware
+    # Preserve the invoking user's shared simulation/hardware settings even
+    # on sudo installations that reset HOME to /root.
+    CONFIG_DIR="${BXI_LIMB_CONFIG_DIR:-$HOME/.config/bxi_limb_inspection}"
+    exec sudo -E env BXI_LIMB_CONFIG_DIR="$CONFIG_DIR" "$0" hardware
 fi
 
 set +u

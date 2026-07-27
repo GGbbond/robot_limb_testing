@@ -189,9 +189,16 @@ class InspectionSettings:
             raise ValueError("全行程速度必须在 1°/s 到 30°/s 之间")
         if not 0.05 <= self.minimum_motion_ratio <= 1.2:
             raise ValueError("最小响应比例必须在 0.05 到 1.2 之间")
-        if min(self.tracking_tolerance_deg, self.cross_axis_limit_deg,
-               self.max_velocity_deg_s, self.max_effort_nm) <= 0:
-            raise ValueError("判定阈值必须大于 0")
+        bounded_thresholds = (
+            ("最大跟踪误差", self.tracking_tolerance_deg, 0.1, 30.0),
+            ("最大关节串扰", self.cross_axis_limit_deg, 0.1, 30.0),
+            ("最大速度", self.max_velocity_deg_s, 1.0, 500.0),
+            ("最大力矩", self.max_effort_nm, 0.1, 1000.0),
+        )
+        for label, value, low, high in bounded_thresholds:
+            if not low <= value <= high:
+                raise ValueError(
+                    "%s必须在 %g 到 %g 之间" % (label, low, high))
 
     @property
     def amplitude_rad(self) -> float:

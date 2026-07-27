@@ -84,6 +84,9 @@ def main():
 
         arm_settings = replace(settings, limb="arm")
         arm_names = selected_joints(arm_settings.limb, arm_settings.side)
+        node.request_initialize(arm_settings)
+        wait_until(lambda: node.snapshot()["initialized"],
+                   8.0, "切换双臂后重新初始化超时")
         node.start_test(arm_settings)
         wait_until(lambda: node.snapshot()["state"] == "检测完成",
                    45.0, "双臂同步检测超时")

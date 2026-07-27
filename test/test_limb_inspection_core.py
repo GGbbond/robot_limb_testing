@@ -74,6 +74,17 @@ def test_simulation_debug_accepts_effectively_unbounded_parameters():
         settings.validate()
 
 
+def test_hardware_thresholds_cannot_disable_safety_guards():
+    for field, value in (
+            ("tracking_tolerance_deg", 30.1),
+            ("cross_axis_limit_deg", 30.1),
+            ("max_velocity_deg_s", 500.1),
+            ("max_effort_nm", 1000.1)):
+        settings = InspectionSettings(**{field: value})
+        with pytest.raises(ValueError):
+            settings.validate()
+
+
 def test_simultaneous_peer_is_not_counted_as_cross_axis_motion():
     settings = InspectionSettings(
         amplitude_deg=5.0, max_velocity_deg_s=100.0,

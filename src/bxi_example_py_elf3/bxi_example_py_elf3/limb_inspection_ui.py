@@ -8,6 +8,12 @@ from datetime import datetime
 from pathlib import Path
 from threading import Thread
 
+# The embedded viewport is an offscreen renderer.  GLFW/GLX context creation
+# is unreliable when the desktop is using an incompatible GLX visual, while
+# EGL does not depend on the Qt window's X11 visual.  This must be selected
+# before the controller imports MuJoCo through the collision guard.
+os.environ.setdefault("MUJOCO_GL", "egl")
+
 import numpy as np
 import pyqtgraph as pg
 import rclpy
@@ -80,7 +86,7 @@ class LimbInspectionWindow(QMainWindow):
         if not controller.hardware_mode:
             self.simulation_timer = QTimer(self)
             self.simulation_timer.timeout.connect(self._refresh_simulation)
-            self.simulation_timer.start(33)
+            self.simulation_timer.start(50)
 
     def _apply_theme(self):
         self.setStyleSheet("""
@@ -581,8 +587,9 @@ class LimbInspectionWindow(QMainWindow):
         self.stop_button.setEnabled(snap["test_running"])
         self.export_button.setEnabled(bool(snap["results"]))
         self._refresh_production_results(snap)
-        self._refresh_plot(snap)
-        self._refresh_results(snap["results"])
+        if self.ui_mode == "debug":
+            self._refresh_plot(snap)
+            self._refresh_results(snap["results"])
         for timestamp, level, message in self.controller.drain_events():
             row = self.log_table.rowCount()
             self.log_table.insertRow(row)

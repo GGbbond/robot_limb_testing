@@ -162,6 +162,13 @@ def main(args=None):
         display_name = hidden_display.start()
         environment = os.environ.copy()
         environment["DISPLAY"] = display_name
+        # The vendor window is never shown.  Mesa otherwise creates one
+        # llvmpipe worker per CPU and lets invisible drawing starve ROS and Qt
+        # on robot PCs.  Two workers leave deterministic headroom for physics
+        # and control while remaining portable to machines without a GPU.
+        environment["LP_NUM_THREADS"] = environment.get(
+            "BXI_VENDOR_RENDER_THREADS", "2")
+        environment.setdefault("MESA_GLTHREAD", "false")
         command = [
             str(_vendor_simulation_path()),
             str(model_path),

@@ -21,6 +21,7 @@ from .limb_inspection_core import (
     JOINT_KD,
     JOINT_KP,
     JOINT_NAMES,
+    MODEL_COLLISION_FREE_RANGE_DEG,
     POSITION_MAX,
     POSITION_MIN,
     InspectionSettings,
@@ -61,6 +62,8 @@ class LimbInspectionController(Node):
             "collision_guard_enabled", True).value)
         self.max_command_gap_sec = float(self.declare_parameter(
             "max_command_gap_sec", 0.08).value)
+        self.sample_rate_hz = float(self.declare_parameter(
+            "sample_rate_hz", 50.0).value)
         if not 20.0 <= self.control_rate_hz <= 500.0:
             raise ValueError("control_rate_hz must be between 20 and 500")
         if not 0.03 <= self.max_command_gap_sec <= 1.0:
@@ -69,6 +72,9 @@ class LimbInspectionController(Node):
             raise ValueError("simulation_bench_height_m must be between 1.2 and 3.0")
         if not 0.0 <= self.velocity_fault_duration_sec <= 0.5:
             raise ValueError("velocity_fault_duration_sec must be between 0 and 0.5")
+        if not 10.0 <= self.sample_rate_hz <= self.control_rate_hz:
+            raise ValueError(
+                "sample_rate_hz must be between 10 and control_rate_hz")
 
         qos = QoSProfile(
             depth=1,
@@ -94,6 +100,8 @@ class LimbInspectionController(Node):
         self.velocity = np.zeros(len(JOINT_NAMES), dtype=float)
         self.effort = np.zeros(len(JOINT_NAMES), dtype=float)
         self.seen = np.zeros(len(JOINT_NAMES), dtype=bool)
+        self.velocity_seen = np.zeros(len(JOINT_NAMES), dtype=bool)
+        self.effort_seen = np.zeros(len(JOINT_NAMES), dtype=bool)
         self.feedback_at = np.zeros(len(JOINT_NAMES), dtype=float)
         self.velocity_overrun_started_at = np.zeros(
             len(JOINT_NAMES), dtype=float)
@@ -103,6 +111,7 @@ class LimbInspectionController(Node):
         self.selected_groups = tuple()
         self.selected_indices = tuple()
         self.controlled_indices = tuple()
+        self.initialized_names = tuple()
         self.settings = InspectionSettings()
         self.state = "等待反馈"
         self.detail = "请选择测试对象并确认台架安全"
@@ -140,6 +149,9 @@ class LimbInspectionController(Node):
         self.last_publish_at = 0.0
         self.last_feedback_notice = 0.0
         self.last_visual_collision_check_at = 0.0
+        self.last_publisher_check_at = 0.0
+        self.last_sample_at = 0.0
+        self.sample_period_sec = 1.0 / self.sample_rate_hz
         self.collision_guard = None
         if self.collision_guard_enabled:
             model_path = get_package_share_path(
@@ -229,9 +241,26 @@ class LimbInspectionController(Node):
             if any(now - self.feedback_at[i] > self.feedback_timeout_sec
                    for i in self.selected_indices):
                 raise RuntimeError("所选关节反馈已超时")
+            if self.hardware_mode:
+                missing_velocity = [
+                    JOINT_NAMES[i] for i in self.selected_indices
+                    if not self.velocity_seen[i]
+                ]
+                missing_effort = [
+                    JOINT_NAMES[i] for i in self.selected_indices
+                    if not self.effort_seen[i]
+                ]
+                if missing_velocity:
+                    raise RuntimeError(
+                        "以下关节没有速度反馈：" + ", ".join(missing_velocity))
+                if missing_effort:
+                    raise RuntimeError(
+                        "以下关节没有力矩反馈：" + ", ".join(missing_effort))
             if self.hardware_mode and self.count_publishers(self.command_topic) > 1:
                 raise RuntimeError("检测到多个关节命令发布者，请关闭其他控制器")
             self.initialized = False
+            self.initialized_names = tuple()
+            self.last_publish_at = 0.0
             self.progress = 0.0
             self.velocity_overrun_started_at[:] = 0.0
             if self.hardware_mode:
@@ -290,6 +319,13 @@ class LimbInspectionController(Node):
         return success
 
     def start_test(self, settings):
+        settings.validate(simulation_debug=not self.hardware_mode)
+        requested_names = selected_joints(settings.limb, settings.side)
+        with self.lock:
+            if not self.initialized:
+                raise RuntimeError("请先完成机器人初始化")
+            if requested_names != self.initialized_names:
+                raise RuntimeError("检测对象与已初始化关节不一致，请重新初始化")
         self.configure_selection(settings)
         with self.lock:
             if not self.initialized:
@@ -304,6 +340,9 @@ class LimbInspectionController(Node):
             if any(now - self.feedback_at[i] > self.feedback_timeout_sec
                    for i in self.selected_indices):
                 raise RuntimeError("所选关节反馈超时，拒绝启动")
+            if self.hardware_mode and self.count_publishers(
+                    self.command_topic) > 1:
+                raise RuntimeError("检测到多个关节命令发布者，请关闭其他控制器")
             self.center = self.position.copy()
             self.joint_target_ranges = {}
             if settings.motion_mode == "safe_range":
@@ -334,12 +373,43 @@ class LimbInspectionController(Node):
                     self.joint_target_ranges = mirrored_target_ranges(
                         self.selected_groups, self.joint_target_ranges,
                         settings.collision_margin_deg)
+                outside_margined_range = []
                 for name, (low, high) in self.joint_target_ranges.items():
+                    index = JOINT_NAMES.index(name)
                     value = self.center[JOINT_NAMES.index(name)]
-                    if not low <= value <= high:
+                    model_low_deg, model_high_deg = \
+                        MODEL_COLLISION_FREE_RANGE_DEG[name]
+                    raw_low = max(
+                        float(POSITION_MIN[index]),
+                        float(np.deg2rad(model_low_deg)))
+                    raw_high = min(
+                        float(POSITION_MAX[index]),
+                        float(np.deg2rad(model_high_deg)))
+                    if not raw_low <= value <= raw_high:
                         raise RuntimeError(
-                            "%s 的当前位置不在碰撞安全范围内" % name
+                            "%s 的当前位置不在模型无碰撞范围内" % name
                         )
+                    if not low <= value <= high:
+                        outside_margined_range.append(name)
+                center_collisions = self.collision_guard.collisions(self.center)
+                if center_collisions:
+                    geom_1, geom_2, distance = center_collisions[0]
+                    raise RuntimeError(
+                        "当前位置存在模型碰撞：%s ↔ %s（侵入 %.1f mm）" %
+                        (geom_1, geom_2, -1000.0 * distance))
+                for name in self.selected_names:
+                    visual_hits = self.collision_guard.visual_mesh_collisions(
+                        self.center, name)
+                    if visual_hits:
+                        body_1, body_2, distance = visual_hits[0]
+                        raise RuntimeError(
+                            "当前位置存在视觉外壳侵入：%s ↔ %s（侵入 %.1f mm）" %
+                            (body_1, body_2, -1000.0 * distance))
+                if outside_margined_range:
+                    self._event(
+                        "warning",
+                        "当前位置位于带余量目标范围之外，将先平滑进入安全目标：" +
+                        ", ".join(outside_margined_range))
             else:
                 validate_center(self.selected_names, self.center,
                                 settings.amplitude_rad)
@@ -359,6 +429,7 @@ class LimbInspectionController(Node):
             self.command = self.center.copy()
             self.results = []
             self.samples = []
+            self.last_sample_at = 0.0
             self.test_running = True
             self.returning = False
             self.state = "自动检测中"
@@ -391,6 +462,7 @@ class LimbInspectionController(Node):
             self.test_running = False
             self.returning = False
             self.initialized = False
+            self.initialized_names = tuple()
             self.fault_latched = True
             self.state = "急停锁定"
             self.detail = reason + "；已停止发送控制命令"
@@ -402,6 +474,10 @@ class LimbInspectionController(Node):
         names = message.name if message.name else JOINT_NAMES[:len(message.position)]
         mapping = {name: i for i, name in enumerate(names)}
         with self.lock:
+            control_active = self.hardware_mode and self._control_active_locked()
+            if control_active and len(mapping) != len(names):
+                self.emergency_stop("关节反馈包含重复名称")
+                return
             seen_before = int(np.count_nonzero(self.seen))
             for index, name in enumerate(JOINT_NAMES):
                 source = mapping.get(name)
@@ -417,10 +493,24 @@ class LimbInspectionController(Node):
                     value = float(message.velocity[source])
                     if np.isfinite(value):
                         self.velocity[index] = value
+                        self.velocity_seen[index] = True
+                    elif control_active and index in self.selected_indices:
+                        self.emergency_stop("收到非有限关节速度：" + name)
+                        return
+                elif control_active and index in self.selected_indices:
+                    self.emergency_stop("带电阶段缺少关节速度：" + name)
+                    return
                 if source < len(message.effort):
                     value = float(message.effort[source])
                     if np.isfinite(value):
                         self.effort[index] = value
+                        self.effort_seen[index] = True
+                    elif control_active and index in self.selected_indices:
+                        self.emergency_stop("收到非有限关节力矩：" + name)
+                        return
+                elif control_active and index in self.selected_indices:
+                    self.emergency_stop("带电阶段缺少关节力矩：" + name)
+                    return
                 self.seen[index] = True
                 self.feedback_at[index] = now
             seen_after = int(np.count_nonzero(self.seen))
@@ -430,7 +520,9 @@ class LimbInspectionController(Node):
                 self.detail = "已收到 %d/29 个关节反馈，请选择检测对象并初始化" % seen_after
                 if seen_before == 0:
                     self._event("info", "已开始接收关节反馈（%d/29）" % seen_after)
-            if self.test_running:
+            monitor_actuators = self.test_running or (
+                self.hardware_mode and self._control_active_locked())
+            if monitor_actuators:
                 for index in self.selected_indices:
                     if (self.position[index] < POSITION_MIN[index] or
                             self.position[index] > POSITION_MAX[index]):
@@ -470,15 +562,21 @@ class LimbInspectionController(Node):
         with self.lock:
             if self.fault_latched:
                 return
-            # MuJoCo and Qt rendering can legitimately pause the Python process
-            # for tens of milliseconds. Only real hardware treats a publish
-            # scheduling gap as a latched safety fault; the hardware driver has
-            # its own independent command-loss protection as the final guard.
-            if (self.hardware_mode and self.initialized and
-                    self.last_publish_at > 0.0 and
-                    now - self.last_publish_at > self.max_command_gap_sec):
-                self.emergency_stop("控制命令发布间隔超时")
-                return
+            # Every phase that can energize hardware gets the same independent
+            # feedback, publisher-count and scheduling-gap protection.
+            if self.hardware_mode and self._control_active_locked():
+                if (self.last_publish_at > 0.0 and
+                        now - self.last_publish_at > self.max_command_gap_sec):
+                    self.emergency_stop("控制命令发布间隔超时")
+                    return
+                if not self._feedback_is_fresh_locked(now):
+                    self.emergency_stop("带电阶段关节反馈超时")
+                    return
+                if now - self.last_publisher_check_at >= 0.5:
+                    self.last_publisher_check_at = now
+                    if self.count_publishers(self.command_topic) > 1:
+                        self.emergency_stop("运行中检测到多个关节命令发布者")
+                        return
             if self.reset_step:
                 self._advance_initialization_locked(now)
             elif self.test_running:
@@ -535,6 +633,7 @@ class LimbInspectionController(Node):
             self._event("info", "初始化步骤 1 完成")
             return
         self.initialized = True
+        self.initialized_names = self.selected_names
         self.reset_step = 0
         self.progress = 0.0
         self.state = "就绪"
@@ -545,6 +644,11 @@ class LimbInspectionController(Node):
         return bool(self.selected_indices) and all(
             self.seen[i] and now - self.feedback_at[i] <= self.feedback_timeout_sec
             for i in self.selected_indices)
+
+    def _control_active_locked(self):
+        return bool(self.selected_indices) and (
+            self.initialized or self.test_running or self.returning or
+            self.reset_step in (-2, 2))
 
     def _begin_joint_locked(self, now):
         self.current_joint_names = self.selected_groups[self.current_joint_cursor]
@@ -642,14 +746,24 @@ class LimbInspectionController(Node):
             else:
                 joint_position = self.segment_target_positions[name]
             self.command[JOINT_NAMES.index(name)] = joint_position
-        row = {
-            "time": time.time(), "joint": ",".join(self.current_joint_names),
-            "command": self.command.copy(), "position": self.position.copy(),
-            "velocity": self.velocity.copy(), "effort": self.effort.copy(),
-        }
-        self.samples.append(row)
-        self.current_samples.append(row)
         segment_duration = move_duration + settings.hold_sec
+        should_sample = (
+            not self.current_samples or
+            now - self.last_sample_at >= self.sample_period_sec or
+            elapsed >= segment_duration
+        )
+        if should_sample:
+            row = {
+                "time": time.time(),
+                "joint": ",".join(self.current_joint_names),
+                "command": self.command.astype(np.float32, copy=True),
+                "position": self.position.astype(np.float32, copy=True),
+                "velocity": self.velocity.astype(np.float32, copy=True),
+                "effort": self.effort.astype(np.float32, copy=True),
+            }
+            self.samples.append(row)
+            self.current_samples.append(row)
+            self.last_sample_at = now
         if elapsed < segment_duration:
             self._update_progress_locked(elapsed / segment_duration)
             return
